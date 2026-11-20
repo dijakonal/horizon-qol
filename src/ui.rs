@@ -1,87 +1,152 @@
-//! The mod menu: a centred panel with a search box, a sidebar of categories and a grid of module
-//! cards, in the style of a client mod menu. It draws in GUI pixels with `DrawContext` and keeps the
-//! boxes it drew last frame, so a click is matched against what the player saw.
+//! The mod's screen: the HUD editor (what Right Shift opens) and the mod menu over it.
+//!
+//! The HUD editor shows every HUD element that is on, to drag around, scroll to resize and
+//! right-click for its settings, with a Mods button in the middle. The menu lists the modules
+//! by category with a search box; each module's options page has switches, sliders and colour
+//! swatches. Everything is drawn in GUI pixels, and the boxes drawn last frame are kept so a
+//! click is matched against what the player saw.
 
-use crate::modules::{Category, Module};
-use mod_api::DrawContext;
+use crate::hud::{self, HudData};
+use crate::modules::{Category, Module, Place};
+use crate::settings::{PALETTE, Setting};
+use mod_api::client::hud_layout::PoseOp;
+use mod_api::{DrawContext, GuiDraw, Text};
 use std::time::Instant;
 
 /// Colours, as ARGB. Alpha is scaled by the open fade when drawn.
 mod theme {
-    pub const PANEL: u32 = 0xF0101014;
-    pub const HEADER: u32 = 0xFF16161C;
-    pub const SIDEBAR: u32 = 0xFF131318;
-    pub const BORDER: u32 = 0xFF26262E;
-    pub const CARD: u32 = 0xFF1B1B22;
-    pub const CARD_HOVER: u32 = 0xFF23232C;
-    pub const TAB_HOVER: u32 = 0xFF1C1C24;
-    pub const TAB_ACTIVE: u32 = 0xFF22222B;
+    pub const SHADE: u32 = 0x66000000;
+    pub const PANEL: u32 = 0xF20E0E12;
+    pub const HEADER: u32 = 0xFF15151B;
+    pub const SIDEBAR: u32 = 0xFF111116;
+    pub const BORDER: u32 = 0xFF25252E;
+    pub const CARD: u32 = 0xFF191920;
+    pub const CARD_HOVER: u32 = 0xFF202029;
+    pub const ROW: u32 = 0xFF17171D;
+    pub const TAB_HOVER: u32 = 0xFF1A1A21;
+    pub const TAB_ACTIVE: u32 = 0xFF21212A;
     pub const ACCENT: u32 = 0xFF4F8CFF;
+    pub const ACCENT_HOVER: u32 = 0xFF6A9EFF;
     pub const TEXT: u32 = 0xFFF2F2F5;
-    pub const TEXT_DIM: u32 = 0xFF8C8C99;
-    pub const TEXT_FAINT: u32 = 0xFF5A5A66;
+    pub const TEXT_DIM: u32 = 0xFF9090A0;
+    pub const TEXT_FAINT: u32 = 0xFF5C5C6A;
     pub const ON: u32 = 0xFF22C55E;
-    pub const ON_HOVER: u32 = 0xFF34D670;
-    pub const OFF: u32 = 0xFFDC3545;
-    pub const OFF_HOVER: u32 = 0xFFEA4A5A;
-    pub const BUTTON: u32 = 0xFF2A2A34;
-    pub const BUTTON_HOVER: u32 = 0xFF363642;
-    pub const SEARCH: u32 = 0xFF0C0C10;
+    pub const ON_HOVER: u32 = 0xFF3AD673;
+    pub const OFF: u32 = 0xFF2A2A33;
+    pub const OFF_HOVER: u32 = 0xFF34343F;
+    pub const BUTTON: u32 = 0xFF26262F;
+    pub const BUTTON_HOVER: u32 = 0xFF32323D;
+    pub const SEARCH: u32 = 0xFF0A0A0E;
+    pub const GUIDE: u32 = 0xC04F8CFF;
 }
 
 /// The height of a line of the game's font, in GUI pixels.
 const LINE: f32 = 9.0;
-const HEADER_H: f32 = 24.0;
+const HEADER_H: f32 = 28.0;
 const FOOTER_H: f32 = 16.0;
-const SIDEBAR_W: f32 = 72.0;
+const SIDEBAR_W: f32 = 78.0;
 const TAB_H: f32 = 18.0;
 const GAP: f32 = 6.0;
-const CARD_MIN_W: f32 = 88.0;
-const CARD_H: f32 = 64.0;
+const CARD_MIN_W: f32 = 96.0;
+const CARD_H: f32 = 84.0;
+const ROW_H: f32 = 22.0;
 const SCROLL_STEP: f32 = 24.0;
 const FADE_SECS: f32 = 0.12;
 const SEARCH_MAX: usize = 24;
+/// How close an edge must come to a guide to snap to it.
+const SNAP: f32 = 4.0;
+const SCALE_STEP: f32 = 0.1;
 
 /// Something the player can click.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Target {
     /// A sidebar tab: `None` is "All".
     Tab(Option<Category>),
-    /// The on/off bar of module `index`.
+    /// The on/off control of module `index`.
     Toggle(usize),
     /// The options button of module `index`.
     Options(usize),
     /// Back from a module's options to the grid.
     Back,
-    /// The search box, which clears it.
+    /// The search box's clear button.
     ClearSearch,
+    /// Setting `setting` of module `module`: a switch, or a slider's track.
+    Setting { module: usize, setting: usize },
+    /// Swatch `swatch` of colour setting `setting`.
+    Swatch {
+        module: usize,
+        setting: usize,
+        swatch: usize,
+    },
+    /// Puts module `index`'s settings and place back.
+    ResetModule(usize),
+    /// Opens the HUD editor.
+    EditHud,
+    /// Opens the mod menu from the HUD editor.
+    OpenMenu,
+    /// Puts every HUD element back where it started.
+    ResetLayout,
+    /// The HUD element of module `index`, in the editor.
+    Element(usize),
 }
 
-/// What the menu shows in its content area.
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// What the screen shows.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum View {
+    Editor,
+    Menu,
+}
+
+/// What the menu's content area shows.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Page {
     Grid,
     Options(usize),
 }
 
-/// The open menu's state, kept while it is open and dropped when it closes.
-pub struct Menu {
+/// A drag in progress.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Drag {
+    /// A slider's knob, along `track` (its x and width).
+    Slider {
+        module: usize,
+        setting: usize,
+        track: [f32; 2],
+    },
+    /// A HUD element, held `grab` pixels from its top left.
+    Element { module: usize, grab: [f32; 2] },
+}
+
+/// The open screen's state, kept while it is open and dropped when it closes.
+pub struct Gui {
+    pub view: View,
     opened: Instant,
     tab: Option<Category>,
     page: Page,
     search: String,
     scroll: f32,
-    /// How far the grid can scroll, from the last frame.
     max_scroll: f32,
-    /// The grid's area, from the last frame: scrolling only acts over it.
+    /// The scrolling area, from the last frame: scrolling only acts over it.
     content: [f32; 4],
-    /// What was drawn last frame and where.
+    /// The clip new hit boxes are cut to.
+    clip: Option<[f32; 4]>,
+    /// What was drawn last frame and where, the topmost last.
     hits: Vec<([f32; 4], Target)>,
+    drag: Option<Drag>,
+    /// Snap guides of the element being dragged: a vertical line's x, a horizontal line's y.
+    guides: [Option<f32>; 2],
+    /// The screen size of the last frame.
+    screen: [f32; 2],
+    /// The HUD elements' rectangles from the last frame, by module.
+    elements: Vec<(usize, [f32; 4])>,
+    /// Something changed that the config file should keep.
+    pub dirty: bool,
 }
 
-impl Default for Menu {
-    fn default() -> Self {
+impl Gui {
+    pub fn new(view: View) -> Self {
         Self {
+            view,
             opened: Instant::now(),
             tab: None,
             page: Page::Grid,
@@ -89,13 +154,35 @@ impl Default for Menu {
             scroll: 0.0,
             max_scroll: 0.0,
             content: [0.0; 4],
+            clip: None,
             hits: Vec::new(),
+            drag: None,
+            guides: [None, None],
+            screen: [0.0; 2],
+            elements: Vec::new(),
+            dirty: false,
         }
+    }
+
+    /// Opens the menu straight on module `index`'s options.
+    pub fn open_options(&mut self, index: usize) {
+        self.view = View::Menu;
+        self.page = Page::Options(index);
+        self.scroll = 0.0;
+        self.opened = Instant::now();
     }
 }
 
 fn inside(r: [f32; 4], p: [f32; 2]) -> bool {
     p[0] >= r[0] && p[0] < r[0] + r[2] && p[1] >= r[1] && p[1] < r[1] + r[3]
+}
+
+fn intersect(a: [f32; 4], b: [f32; 4]) -> Option<[f32; 4]> {
+    let x0 = a[0].max(b[0]);
+    let y0 = a[1].max(b[1]);
+    let x1 = (a[0] + a[2]).min(b[0] + b[2]);
+    let y1 = (a[1] + a[3]).min(b[1] + b[3]);
+    (x1 > x0 && y1 > y0).then_some([x0, y0, x1 - x0, y1 - y0])
 }
 
 /// `argb` with its alpha multiplied by `k` (0 to 1).
@@ -117,24 +204,66 @@ impl Paint<'_> {
         }
     }
 
-    /// A rectangle with its corners cut by one pixel, which reads as rounded at GUI scale.
+    /// A rectangle with its corners cut by `r` pixels (1 or 2), which reads as rounded.
     fn rounded(&mut self, [x, y, w, h]: [f32; 4], argb: u32) {
-        self.fill([x + 1.0, y, w - 2.0, 1.0], argb);
-        self.fill([x, y + 1.0, w, h - 2.0], argb);
-        self.fill([x + 1.0, y + h - 1.0, w - 2.0, 1.0], argb);
+        if w < 4.0 || h < 4.0 {
+            self.fill([x, y, w, h], argb);
+            return;
+        }
+        self.fill([x + 2.0, y, w - 4.0, 1.0], argb);
+        self.fill([x + 1.0, y + 1.0, w - 2.0, 1.0], argb);
+        self.fill([x, y + 2.0, w, h - 4.0], argb);
+        self.fill([x + 1.0, y + h - 2.0, w - 2.0, 1.0], argb);
+        self.fill([x + 2.0, y + h - 1.0, w - 4.0, 1.0], argb);
     }
 
-    /// A one-pixel outline inside `r`, with cut corners.
+    /// A one-pixel outline inside `r`.
     fn outline(&mut self, [x, y, w, h]: [f32; 4], argb: u32) {
-        self.fill([x + 1.0, y, w - 2.0, 1.0], argb);
-        self.fill([x + 1.0, y + h - 1.0, w - 2.0, 1.0], argb);
+        self.fill([x, y, w, 1.0], argb);
+        self.fill([x, y + h - 1.0, w, 1.0], argb);
         self.fill([x, y + 1.0, 1.0, h - 2.0], argb);
         self.fill([x + w - 1.0, y + 1.0, 1.0, h - 2.0], argb);
+    }
+
+    /// A dashed one-pixel outline around `r`.
+    fn dashed(&mut self, [x, y, w, h]: [f32; 4], argb: u32) {
+        let mut t = 0.0;
+        while t < w {
+            let l = 3.0_f32.min(w - t);
+            self.fill([x + t, y, l, 1.0], argb);
+            self.fill([x + t, y + h - 1.0, l, 1.0], argb);
+            t += 6.0;
+        }
+        let mut t = 0.0;
+        while t < h {
+            let l = 3.0_f32.min(h - t);
+            self.fill([x, y + t, 1.0, l], argb);
+            self.fill([x + w - 1.0, y + t, 1.0, l], argb);
+            t += 6.0;
+        }
     }
 
     fn text(&mut self, s: &str, at: [f32; 2], argb: u32) {
         self.draw
             .text(s, [at[0].round(), at[1].round()], fade(argb, self.k), false);
+    }
+
+    /// `s` drawn `scale` times its size, its top left at `at`.
+    fn text_scaled(&mut self, s: &str, at: [f32; 2], scale: f32, argb: u32) {
+        let _ = self.draw.gui_paint(&[
+            GuiDraw::Push(vec![
+                PoseOp::Translate(at[0].round(), at[1].round()),
+                PoseOp::Scale(scale, scale),
+            ]),
+            GuiDraw::Text {
+                text: Text::literal(s),
+                x: 0,
+                y: 0,
+                color: fade(argb, self.k),
+                shadow: false,
+            },
+            GuiDraw::Pop,
+        ]);
     }
 
     fn width(&self, s: &str) -> f32 {
@@ -158,9 +287,100 @@ impl Paint<'_> {
         }
         format!("{out}...")
     }
+
+    /// `s` broken into at most `lines` lines of `max` pixels at spaces, the last cut with an
+    /// ellipsis when it doesn't fit.
+    fn wrap(&self, s: &str, max: f32, lines: usize) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let mut words = s.split(' ');
+        while let Some(word) = words.next() {
+            let joined = out.last().map(|line| format!("{line} {word}"));
+            match joined {
+                Some(j) if self.width(&j) <= max => {
+                    *out.last_mut().expect("a line") = j;
+                }
+                _ if out.len() == lines => {
+                    let rest: Vec<&str> = std::iter::once(word).chain(words).collect();
+                    let last = out.pop().unwrap_or_default();
+                    out.push(self.fit(&format!("{last} {}", rest.join(" ")), max));
+                    return out;
+                }
+                _ => out.push(self.fit(word, max)),
+            }
+        }
+        out
+    }
+
+    /// A button: a rounded box with a centred label, lit while hovered.
+    fn button(&mut self, r: [f32; 4], label: &str, hover: bool, primary: bool) {
+        let colour = match (primary, hover) {
+            (true, false) => theme::ACCENT,
+            (true, true) => theme::ACCENT_HOVER,
+            (false, false) => theme::BUTTON,
+            (false, true) => theme::BUTTON_HOVER,
+        };
+        self.rounded(r, colour);
+        self.text_centred(
+            label,
+            r[0],
+            r[2],
+            r[1] + ((r[3] - LINE) / 2.0).floor() + 1.0,
+            theme::TEXT,
+        );
+    }
+
+    /// An on/off switch, 22 by 10.
+    fn switch(&mut self, at: [f32; 2], on: bool, hover: bool) {
+        let r = [at[0], at[1], 22.0, 10.0];
+        let track = match (on, hover) {
+            (true, false) => theme::ON,
+            (true, true) => theme::ON_HOVER,
+            (false, false) => theme::OFF,
+            (false, true) => theme::OFF_HOVER,
+        };
+        self.rounded(r, track);
+        let knob_x = if on { r[0] + r[2] - 9.0 } else { r[0] + 1.0 };
+        self.rounded([knob_x, r[1] + 1.0, 8.0, 8.0], theme::TEXT);
+    }
+
+    /// A module's icon tile: its colour with its glyph.
+    fn icon(&mut self, r: [f32; 4], m: &Module) {
+        self.rounded(r, fade(m.colour, 0.9));
+        self.fill([r[0] + 2.0, r[1] + r[3] - 3.0, r[2] - 4.0, 1.0], 0x30000000);
+        let glyph = self.fit(m.glyph, r[2] - 2.0);
+        self.text_centred(
+            &glyph,
+            r[0],
+            r[2],
+            r[1] + ((r[3] - LINE) / 2.0).floor() + 1.0,
+            theme::TEXT,
+        );
+    }
 }
 
-impl Menu {
+impl Gui {
+    /// Adds a hit box, cut to the current clip.
+    fn hit(&mut self, r: [f32; 4], target: Target) {
+        let r = match self.clip {
+            Some(c) => match intersect(r, c) {
+                Some(r) => r,
+                None => return,
+            },
+            None => r,
+        };
+        self.hits.push((r, target));
+    }
+
+    /// The topmost hit box under `at`.
+    fn target_at(&self, at: [f32; 2]) -> Option<(usize, [f32; 4], Target)> {
+        self.hits
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, (r, _))| inside(*r, at))
+            .map(|(i, (r, t))| (i, *r, *t))
+    }
+
     /// The module indices the grid shows, in order.
     fn visible(&self, modules: &[Module]) -> Vec<usize> {
         let query = self.search.to_lowercase();
@@ -172,48 +392,176 @@ impl Menu {
             .collect()
     }
 
-    /// Draws the menu over a screen of `size` GUI pixels, with the mouse at `mouse`.
+    /// Draws the screen over a GUI of `size` pixels, with the mouse at `mouse`.
     pub fn draw(
         &mut self,
         draw: &mut dyn DrawContext,
         size: [f32; 2],
         mouse: [f32; 2],
         modules: &[Module],
+        data: &HudData,
         close_key: &str,
     ) {
         let k = (self.opened.elapsed().as_secs_f32() / FADE_SECS).min(1.0);
-        // Ease out, and slide the panel up a few pixels as it fades in.
         let ease = 1.0 - (1.0 - k) * (1.0 - k);
-        let mut p = Paint { draw, k: ease };
-        self.hits.clear();
+        // Last frame's boxes decide what is hovered; this frame's are collected as it draws.
+        let last = std::mem::take(&mut self.hits);
+        let hovered_target = if self.drag.is_none() {
+            last.iter()
+                .rev()
+                .find(|(r, _)| inside(*r, mouse))
+                .map(|(_, t)| *t)
+        } else {
+            None
+        };
+        self.screen = size;
+        self.clip = None;
+        let mut p = Paint { draw, k: 1.0 };
+        let hover = |t: Target| hovered_target == Some(t);
 
+        self.draw_editor(&mut p, size, mouse, modules, data, &hover);
+        if self.view == View::Menu {
+            p.k = ease;
+            self.draw_menu(&mut p, size, mouse, modules, close_key, &hover);
+        }
+    }
+
+    fn draw_editor(
+        &mut self,
+        p: &mut Paint<'_>,
+        size: [f32; 2],
+        mouse: [f32; 2],
+        modules: &[Module],
+        data: &HudData,
+        hover: &dyn Fn(Target) -> bool,
+    ) {
         let [sw, sh] = size;
-        let pw = (sw - 16.0).min(420.0).floor();
-        let ph = (sh - 16.0).min(260.0).floor();
-        let px = ((sw - pw) / 2.0).floor();
-        let py = ((sh - ph) / 2.0).floor() + ((1.0 - ease) * 8.0).round();
+        let editing = self.view == View::Editor;
+        p.fill(
+            [0.0, 0.0, sw, sh],
+            if editing { 0x30000000 } else { theme::SHADE },
+        );
 
-        // Panel and its frame.
+        // Snap guides.
+        if let Some(x) = self.guides[0] {
+            p.fill([x.round(), 0.0, 1.0, sh], theme::GUIDE);
+        }
+        if let Some(y) = self.guides[1] {
+            p.fill([0.0, y.round(), sw, 1.0], theme::GUIDE);
+        }
+
+        // The elements, each with its frame.
+        let sample = data.clone().with_samples();
+        self.elements.clear();
+        for (i, m) in modules.iter().enumerate() {
+            let (true, Some(place)) = (m.enabled, m.place) else {
+                continue;
+            };
+            let Some(content) = hud::editor_content(m, &sample) else {
+                continue;
+            };
+            let scale = m.f32("scale");
+            let unscaled = hud::size(&content, &|s| p.draw.text_width(s));
+            let r = hud::rect(place, scale, unscaled, size);
+            self.elements.push((i, r));
+            if !editing {
+                continue;
+            }
+            hud::draw(p.draw, m, &content, [r[0], r[1]], scale);
+            let dragging = matches!(self.drag, Some(Drag::Element { module, .. }) if module == i);
+            let frame = [r[0] - 2.0, r[1] - 2.0, r[2] + 4.0, r[3] + 4.0];
+            if dragging || hover(Target::Element(i)) {
+                p.fill(frame, 0x204F8CFF);
+                p.outline(frame, theme::ACCENT);
+                // Its name and scale above it, or below when there is no room.
+                let tag = format!("{}  {:.1}x", m.name, scale);
+                let tw = p.width(&tag) + 6.0;
+                let ty = if frame[1] >= 13.0 {
+                    frame[1] - 12.0
+                } else {
+                    frame[1] + frame[3] + 1.0
+                };
+                let tag_r = [frame[0], ty, tw, 11.0];
+                p.fill(tag_r, theme::ACCENT);
+                p.text(&tag, [tag_r[0] + 3.0, tag_r[1] + 2.0], theme::TEXT);
+            } else {
+                p.dashed(frame, 0x70FFFFFF);
+            }
+            self.hit(frame, Target::Element(i));
+        }
+        if !editing {
+            return;
+        }
+
+        // The middle: the name, the Mods button and what to do.
+        let cx = sw / 2.0;
+        let cy = sh / 2.0;
+        let title = "HORIZON QOL";
+        let tw = p.width(title) * 2.0;
+        p.text_scaled(
+            title,
+            [cx - tw / 2.0 + 1.0, cy - 34.0 + 1.0],
+            2.0,
+            0x80000000,
+        );
+        p.text_scaled(title, [cx - tw / 2.0, cy - 34.0], 2.0, theme::TEXT);
+        let mods = [cx - 45.0, cy - 10.0, 90.0, 22.0];
+        p.button(mods, "MODS", hover(Target::OpenMenu), true);
+        self.hit(mods, Target::OpenMenu);
+        let reset = [cx - 45.0, cy + 16.0, 90.0, 14.0];
+        p.button(reset, "Reset layout", hover(Target::ResetLayout), false);
+        self.hit(reset, Target::ResetLayout);
+        let hint = "Drag to move  -  Scroll to resize  -  Right-click for settings";
+        let hint = p.fit(hint, sw - 8.0);
+        let hw = p.width(&hint) + 10.0;
+        let hint_r = [((sw - hw) / 2.0).floor(), cy + 36.0, hw, 13.0];
+        p.rounded(hint_r, 0x90000000);
+        p.text_centred(&hint, hint_r[0], hint_r[2], hint_r[1] + 3.0, 0xE0FFFFFF);
+        let _ = mouse;
+    }
+
+    fn draw_menu(
+        &mut self,
+        p: &mut Paint<'_>,
+        size: [f32; 2],
+        mouse: [f32; 2],
+        modules: &[Module],
+        close_key: &str,
+        hover: &dyn Fn(Target) -> bool,
+    ) {
+        let [sw, sh] = size;
+        let pw = (sw - 16.0).min(460.0).floor();
+        let ph = (sh - 16.0).min(290.0).floor();
+        let px = ((sw - pw) / 2.0).floor();
+        let py = ((sh - ph) / 2.0).floor() + ((1.0 - p.k) * 8.0).round();
+
+        // Panel, with a soft shadow and a frame.
+        p.rounded([px - 2.0, py - 1.0, pw + 4.0, ph + 4.0], 0x50000000);
         p.rounded([px - 1.0, py - 1.0, pw + 2.0, ph + 2.0], theme::BORDER);
         p.rounded([px, py, pw, ph], theme::PANEL);
 
         // Header: the name, and the search box on the right.
-        p.fill([px + 1.0, py, pw - 2.0, HEADER_H], theme::HEADER);
+        p.fill([px + 2.0, py, pw - 4.0, 1.0], theme::HEADER);
+        p.fill(
+            [px + 1.0, py + 1.0, pw - 2.0, HEADER_H - 1.0],
+            theme::HEADER,
+        );
         p.fill([px, py + HEADER_H, pw, 1.0], theme::BORDER);
-        p.fill([px + 8.0, py + 7.0, 3.0, 10.0], theme::ACCENT);
+        let logo = [px + 8.0, py + 7.0, 14.0, 14.0];
+        p.rounded(logo, theme::ACCENT);
+        p.text_centred("H", logo[0], logo[2], logo[1] + 3.0, theme::TEXT);
         let title_y = py + (HEADER_H - LINE) / 2.0 + 1.0;
-        p.text("HORIZON", [px + 15.0, title_y], theme::TEXT);
+        p.text("HORIZON", [px + 28.0, title_y], theme::TEXT);
         let tw = p.width("HORIZON");
-        p.text("QOL", [px + 19.0 + tw, title_y], theme::ACCENT);
+        p.text("QOL", [px + 32.0 + tw, title_y], theme::ACCENT);
 
-        let search_w = 110.0_f32.min(pw - 120.0).max(40.0);
+        let search_w = 120.0_f32.min(pw - 140.0).max(40.0);
         let search = [
-            px + pw - search_w - 6.0,
-            py + 5.0,
+            px + pw - search_w - 8.0,
+            py + 6.0,
             search_w,
-            HEADER_H - 10.0,
+            HEADER_H - 12.0,
         ];
-        let search_hover = inside(search, mouse);
         p.rounded(search, theme::BORDER);
         p.rounded(
             [
@@ -227,54 +575,67 @@ impl Menu {
         let sy = search[1] + (search[3] - LINE) / 2.0 + 1.0;
         let caret = (self.opened.elapsed().as_millis() / 500).is_multiple_of(2);
         if self.search.is_empty() {
-            p.text("Search...", [search[0] + 5.0, sy], theme::TEXT_FAINT);
+            p.text(
+                "Search modules...",
+                [search[0] + 6.0, sy],
+                theme::TEXT_FAINT,
+            );
         } else {
             let shown = format!("{}{}", self.search, if caret { "_" } else { "" });
-            let shown = p.fit(&shown, search[2] - 16.0);
-            p.text(&shown, [search[0] + 5.0, sy], theme::TEXT);
-            let x_col = if search_hover {
+            let shown = p.fit(&shown, search[2] - 18.0);
+            p.text(&shown, [search[0] + 6.0, sy], theme::TEXT);
+            let x_r = [search[0] + search[2] - 12.0, search[1], 12.0, search[3]];
+            let x_col = if hover(Target::ClearSearch) {
                 theme::TEXT
             } else {
                 theme::TEXT_DIM
             };
-            p.text("x", [search[0] + search[2] - 9.0, sy - 1.0], x_col);
-            self.hits.push((search, Target::ClearSearch));
+            p.text("x", [x_r[0] + 3.0, sy - 1.0], x_col);
+            self.hit(x_r, Target::ClearSearch);
         }
 
-        // Sidebar: All, then one tab per category.
+        // Sidebar: All, then one tab per category, and Edit HUD at the bottom.
         let body_y = py + HEADER_H + 1.0;
         let body_h = ph - HEADER_H - 1.0 - FOOTER_H;
         p.fill([px + 1.0, body_y, SIDEBAR_W - 1.0, body_h], theme::SIDEBAR);
         p.fill([px + SIDEBAR_W, body_y, 1.0, body_h], theme::BORDER);
+        p.text("MODULES", [px + 10.0, body_y + 7.0], theme::TEXT_FAINT);
         let tabs = std::iter::once(None).chain(Category::ALL.into_iter().map(Some));
         for (i, tab) in tabs.enumerate() {
             let r = [
                 px + 1.0,
-                body_y + 6.0 + i as f32 * TAB_H,
+                body_y + 19.0 + i as f32 * TAB_H,
                 SIDEBAR_W - 1.0,
                 TAB_H,
             ];
             let active = self.tab == tab && self.page == Page::Grid;
-            let hover = inside(r, mouse);
+            let hot = hover(Target::Tab(tab));
             if active {
                 p.fill(r, theme::TAB_ACTIVE);
                 p.fill([r[0], r[1] + 3.0, 2.0, r[3] - 6.0], theme::ACCENT);
-            } else if hover {
+            } else if hot {
                 p.fill(r, theme::TAB_HOVER);
             }
             let label = tab.map_or("All", Category::label);
-            let colour = if active || hover {
+            let count = modules
+                .iter()
+                .filter(|m| tab.is_none_or(|t| m.category == t))
+                .count()
+                .to_string();
+            let colour = if active || hot {
                 theme::TEXT
             } else {
                 theme::TEXT_DIM
             };
-            p.text(
-                label,
-                [r[0] + 10.0, r[1] + (TAB_H - LINE) / 2.0 + 1.0],
-                colour,
-            );
-            self.hits.push((r, Target::Tab(tab)));
+            let ty = r[1] + (TAB_H - LINE) / 2.0 + 1.0;
+            p.text(label, [r[0] + 10.0, ty], colour);
+            let cw = p.width(&count);
+            p.text(&count, [r[0] + r[2] - cw - 8.0, ty], theme::TEXT_FAINT);
+            self.hit(r, Target::Tab(tab));
         }
+        let edit = [px + 6.0, body_y + body_h - 26.0, SIDEBAR_W - 12.0, 20.0];
+        p.button(edit, "Edit HUD", hover(Target::EditHud), true);
+        self.hit(edit, Target::EditHud);
 
         // Content: the grid, or one module's options.
         let content = [
@@ -284,9 +645,25 @@ impl Menu {
             body_h - GAP * 2.0,
         ];
         self.content = content;
+        let clipped = p.draw.push_clip(content).is_ok();
+        self.clip = Some(content);
         match self.page {
-            Page::Grid => self.draw_grid(&mut p, content, mouse, modules),
-            Page::Options(i) => self.draw_options(&mut p, content, mouse, &modules[i]),
+            Page::Grid => self.draw_grid(p, content, modules, hover),
+            Page::Options(i) => self.draw_options(p, content, modules, i, hover),
+        }
+        self.clip = None;
+        if clipped {
+            let _ = p.draw.pop_clip();
+        }
+        // Scrollbar.
+        if self.max_scroll > 0.0 {
+            let [ax, ay, aw, ah] = content;
+            let total = ah + self.max_scroll;
+            let track = [ax + aw + 2.0, ay, 2.0, ah];
+            p.fill(track, theme::BORDER);
+            let thumb_h = (ah * ah / total).max(12.0);
+            let thumb_y = ay + (ah - thumb_h) * (self.scroll / self.max_scroll);
+            p.fill([track[0], thumb_y, 2.0, thumb_h], theme::TEXT_FAINT);
         }
 
         // Footer.
@@ -297,19 +674,19 @@ impl Menu {
         let hint = format!("{close_key} or Esc to close");
         let hw = p.width(&hint);
         p.text(&hint, [px + pw - hw - 8.0, ty], theme::TEXT_FAINT);
-        // The count goes on the left when there is room beside the hint.
-        let count = format!("{enabled}/{} enabled", modules.len());
+        let count = format!("{enabled}/{} on", modules.len());
         if p.width(&count) + hw + 24.0 <= pw {
             p.text(&count, [px + 8.0, ty], theme::TEXT_FAINT);
         }
+        let _ = mouse;
     }
 
     fn draw_grid(
         &mut self,
         p: &mut Paint<'_>,
         area: [f32; 4],
-        mouse: [f32; 2],
         modules: &[Module],
+        hover: &dyn Fn(Target) -> bool,
     ) {
         let [ax, ay, aw, ah] = area;
         let shown = self.visible(modules);
@@ -325,17 +702,13 @@ impl Menu {
             return;
         }
 
-        // Leave room on the right for the scrollbar.
-        let gw = aw - 4.0;
-        let cols = (((gw + GAP) / (CARD_MIN_W + GAP)).floor() as usize).max(1);
-        let cw = ((gw - GAP * (cols - 1) as f32) / cols as f32).floor();
+        let cols = (((aw + GAP) / (CARD_MIN_W + GAP)).floor() as usize).max(1);
+        let cw = ((aw - GAP * (cols - 1) as f32) / cols as f32).floor();
         let rows = shown.len().div_ceil(cols);
         let total = rows as f32 * (CARD_H + GAP) - GAP;
         self.max_scroll = (total - ah).max(0.0);
         self.scroll = self.scroll.clamp(0.0, self.max_scroll);
 
-        let clipped = p.draw.push_clip(area).is_ok();
-        let over_grid = inside(area, mouse);
         for (n, &i) in shown.iter().enumerate() {
             let (row, col) = (n / cols, n % cols);
             let x = ax + col as f32 * (cw + GAP);
@@ -345,174 +718,438 @@ impl Menu {
             }
             let card = [x, y, cw, CARD_H];
             let m = &modules[i];
-            let hover = over_grid && inside(card, mouse);
-            p.rounded(
-                card,
-                if hover {
-                    theme::CARD_HOVER
-                } else {
-                    theme::CARD
-                },
-            );
+            let bar = [x + 5.0, y + CARD_H - 19.0, cw - 10.0 - 17.0, 14.0];
+            let opts = [bar[0] + bar[2] + 3.0, bar[1], 14.0, 14.0];
+            let hot = hover(Target::Toggle(i)) || hover(Target::Options(i));
+            p.rounded(card, if hot { theme::CARD_HOVER } else { theme::CARD });
             if m.enabled {
-                p.outline(card, fade(theme::ON, 0.35));
+                p.fill([x + 2.0, y, cw - 4.0, 1.0], fade(theme::ON, 0.8));
             }
 
-            // Icon tile: the category colour with the module's initial.
-            let icon = [x + ((cw - 20.0) / 2.0).floor(), y + 6.0, 20.0, 20.0];
-            p.rounded(icon, fade(m.category.colour(), 0.85));
-            let initial: String = m.name.chars().take(1).collect();
-            p.text_centred(&initial, icon[0], icon[2], icon[1] + 6.0, theme::TEXT);
+            p.icon([x + 6.0, y + 6.0, 26.0, 18.0], m);
+            if m.is_hud() {
+                let chip = "HUD";
+                let w = p.width(chip) + 6.0;
+                let r = [x + cw - w - 6.0, y + 6.0, w, 11.0];
+                p.rounded(r, theme::BUTTON);
+                p.text(chip, [r[0] + 3.0, r[1] + 2.0], theme::TEXT_DIM);
+            }
+            let name = p.fit(m.name, cw - 12.0);
+            p.text(&name, [x + 6.0, y + 29.0], theme::TEXT);
+            for (n, line) in p.wrap(m.description, cw - 12.0, 2).iter().enumerate() {
+                p.text(
+                    line,
+                    [x + 6.0, y + 40.0 + n as f32 * 10.0],
+                    theme::TEXT_FAINT,
+                );
+            }
 
-            let name = p.fit(m.name, cw - 8.0);
-            p.text_centred(&name, x, cw, y + 30.0, theme::TEXT);
-
-            // The on/off bar, and the options button beside it.
-            let bar = [x + 4.0, y + CARD_H - 18.0, cw - 8.0 - 16.0, 14.0];
-            let opts = [bar[0] + bar[2] + 2.0, bar[1], 14.0, 14.0];
-            let bar_hover = over_grid && inside(bar, mouse);
-            let opts_hover = over_grid && inside(opts, mouse);
-            let (colour, label) = match (m.enabled, bar_hover) {
+            let (colour, label) = match (m.enabled, hover(Target::Toggle(i))) {
                 (true, false) => (theme::ON, "ENABLED"),
                 (true, true) => (theme::ON_HOVER, "ENABLED"),
                 (false, false) => (theme::OFF, "DISABLED"),
                 (false, true) => (theme::OFF_HOVER, "DISABLED"),
             };
             p.rounded(bar, colour);
-            p.text_centred(label, bar[0], bar[2], bar[1] + 3.0, theme::TEXT);
+            p.text_centred(
+                label,
+                bar[0],
+                bar[2],
+                bar[1] + 3.0,
+                if m.enabled {
+                    theme::TEXT
+                } else {
+                    theme::TEXT_DIM
+                },
+            );
             p.rounded(
                 opts,
-                if opts_hover {
+                if hover(Target::Options(i)) {
                     theme::BUTTON_HOVER
                 } else {
                     theme::BUTTON
                 },
             );
-            // Three dots: a menu glyph every font has.
             for d in 0..3 {
                 p.fill(
                     [opts[0] + 4.0 + d as f32 * 2.5, opts[1] + 6.0, 1.5, 1.5],
                     theme::TEXT,
                 );
             }
+            self.hit(bar, Target::Toggle(i));
+            self.hit(opts, Target::Options(i));
+        }
+    }
 
-            // Only the part of a card inside the grid takes clicks.
-            if y >= ay && y + CARD_H <= ay + ah {
-                self.hits.push((bar, Target::Toggle(i)));
-                self.hits.push((opts, Target::Options(i)));
-            } else {
-                let top = ay.max(bar[1]);
-                let bottom = (ay + ah).min(bar[1] + bar[3]);
-                if bottom > top {
-                    self.hits
-                        .push(([bar[0], top, bar[2], bottom - top], Target::Toggle(i)));
-                    self.hits
-                        .push(([opts[0], top, opts[2], bottom - top], Target::Options(i)));
+    fn draw_options(
+        &mut self,
+        p: &mut Paint<'_>,
+        area: [f32; 4],
+        modules: &[Module],
+        i: usize,
+        hover: &dyn Fn(Target) -> bool,
+    ) {
+        let [ax, ay, aw, ah] = area;
+        let m = &modules[i];
+        let top = ay - self.scroll.round();
+
+        let back = [ax, top, 44.0, 14.0];
+        p.button(back, "< Back", hover(Target::Back), false);
+        self.hit(back, Target::Back);
+
+        let icon = [ax, top + 22.0, 32.0, 24.0];
+        p.icon(icon, m);
+        p.text(m.name, [ax + 40.0, top + 24.0], theme::TEXT);
+        p.text(m.category.label(), [ax + 40.0, top + 36.0], theme::TEXT_DIM);
+        let switch_at = [ax + aw - 26.0, top + 29.0];
+        p.switch(switch_at, m.enabled, hover(Target::Toggle(i)));
+        self.hit(
+            [switch_at[0] - 4.0, switch_at[1] - 4.0, 30.0, 18.0],
+            Target::Toggle(i),
+        );
+        let desc = p.fit(m.description, aw);
+        p.text(&desc, [ax, top + 54.0], theme::TEXT_DIM);
+
+        let mut y = top + 70.0;
+        if m.settings.is_empty() {
+            p.text(
+                "This module has no settings.",
+                [ax, y + 4.0],
+                theme::TEXT_FAINT,
+            );
+            y += 20.0;
+        }
+        for (s, setting) in m.settings.iter().enumerate() {
+            let row = [ax, y, aw, ROW_H];
+            let target = Target::Setting {
+                module: i,
+                setting: s,
+            };
+            p.rounded(row, theme::ROW);
+            let label_y = row[1] + (ROW_H - LINE) / 2.0 + 1.0;
+            p.text(setting.label(), [row[0] + 8.0, label_y], theme::TEXT);
+            match setting {
+                Setting::Toggle { value, .. } => {
+                    let at = [row[0] + row[2] - 30.0, row[1] + 6.0];
+                    p.switch(at, *value, hover(target));
+                    self.hit(row, target);
+                }
+                Setting::Slider {
+                    value, min, max, ..
+                } => {
+                    let text = setting.slider_text();
+                    let vw = p.width(&text);
+                    // The value sits in a column of its own, so every track lines up.
+                    let value_col = 40.0;
+                    let track_w = (aw * 0.4).clamp(50.0, 140.0);
+                    let tx = row[0] + row[2] - 8.0 - value_col - 6.0 - track_w;
+                    let track = [tx, row[1] + ROW_H / 2.0 - 1.0, track_w, 2.0];
+                    let f = ((value - min) / (max - min)).clamp(0.0, 1.0);
+                    p.fill(track, theme::OFF_HOVER);
+                    p.fill([track[0], track[1], track_w * f, 2.0], theme::ACCENT);
+                    let active = matches!(self.drag, Some(Drag::Slider { module, setting, .. }) if module == i && setting == s);
+                    let knob = [
+                        track[0] + track_w * f - 3.0,
+                        row[1] + ROW_H / 2.0 - 4.0,
+                        6.0,
+                        8.0,
+                    ];
+                    p.rounded(
+                        knob,
+                        if active || hover(target) {
+                            theme::TEXT
+                        } else {
+                            0xFFD0D0DA
+                        },
+                    );
+                    p.text(
+                        &text,
+                        [row[0] + row[2] - 8.0 - vw, label_y],
+                        theme::TEXT_DIM,
+                    );
+                    self.hit([tx - 4.0, row[1], track_w + 8.0, ROW_H], target);
+                }
+                Setting::Colour { value, .. } => {
+                    let n = PALETTE.len();
+                    let sw = 10.0;
+                    let gap = 3.0;
+                    let total = n as f32 * (sw + gap) - gap;
+                    let mut sx = row[0] + row[2] - 8.0 - total;
+                    for (k, colour) in PALETTE.iter().enumerate() {
+                        let r = [sx, row[1] + (ROW_H - sw) / 2.0, sw, sw];
+                        let t = Target::Swatch {
+                            module: i,
+                            setting: s,
+                            swatch: k,
+                        };
+                        if *colour == (*value | 0xFF00_0000) {
+                            p.outline(
+                                [r[0] - 2.0, r[1] - 2.0, r[2] + 4.0, r[3] + 4.0],
+                                theme::TEXT,
+                            );
+                        } else if hover(t) {
+                            p.outline(
+                                [r[0] - 2.0, r[1] - 2.0, r[2] + 4.0, r[3] + 4.0],
+                                theme::TEXT_FAINT,
+                            );
+                        }
+                        p.fill(r, *colour);
+                        self.hit([r[0] - 1.0, r[1] - 1.0, r[2] + 2.0, r[3] + 2.0], t);
+                        sx += sw + gap;
+                    }
                 }
             }
-        }
-        if clipped {
-            let _ = p.draw.pop_clip();
+            y += ROW_H + 3.0;
         }
 
-        // Scrollbar.
-        if self.max_scroll > 0.0 {
-            let track = [ax + aw - 2.0, ay, 2.0, ah];
-            p.fill(track, theme::BORDER);
-            let thumb_h = (ah * ah / total).max(12.0);
-            let thumb_y = ay + (ah - thumb_h) * (self.scroll / self.max_scroll);
-            p.fill([track[0], thumb_y, 2.0, thumb_h], theme::TEXT_FAINT);
+        // Buttons at the end: reset, and move for a HUD element.
+        y += 4.0;
+        let reset = [ax, y, 70.0, 16.0];
+        p.button(reset, "Reset", hover(Target::ResetModule(i)), false);
+        self.hit(reset, Target::ResetModule(i));
+        if m.is_hud() {
+            let edit = [ax + 76.0, y, 84.0, 16.0];
+            p.button(edit, "Edit position", hover(Target::EditHud), true);
+            self.hit(edit, Target::EditHud);
         }
+        y += 16.0;
+
+        let total = y + self.scroll.round() - ay;
+        self.max_scroll = (total - ah).max(0.0);
+        self.scroll = self.scroll.clamp(0.0, self.max_scroll);
     }
 
-    fn draw_options(&mut self, p: &mut Paint<'_>, area: [f32; 4], mouse: [f32; 2], m: &Module) {
-        let [ax, ay, aw, _] = area;
-        self.max_scroll = 0.0;
-
-        let back = [ax, ay, 40.0, 14.0];
-        let hover = inside(back, mouse);
-        p.rounded(
-            back,
-            if hover {
-                theme::BUTTON_HOVER
-            } else {
-                theme::BUTTON
-            },
-        );
-        p.text_centred("< Back", back[0], back[2], back[1] + 3.0, theme::TEXT);
-        self.hits.push((back, Target::Back));
-
-        let icon = [ax, ay + 22.0, 24.0, 24.0];
-        p.rounded(icon, fade(m.category.colour(), 0.85));
-        let initial: String = m.name.chars().take(1).collect();
-        p.text_centred(&initial, icon[0], icon[2], icon[1] + 8.0, theme::TEXT);
-        p.text(m.name, [ax + 32.0, ay + 24.0], theme::TEXT);
-        p.text(m.category.label(), [ax + 32.0, ay + 36.0], theme::TEXT_DIM);
-        let desc = p.fit(m.description, aw);
-        p.text(&desc, [ax, ay + 54.0], theme::TEXT_DIM);
-
-        // The one real setting: on or off, as a switch.
-        let row = [ax, ay + 70.0, aw, 20.0];
-        p.rounded(row, theme::CARD);
-        p.text("Enabled", [row[0] + 8.0, row[1] + 7.0], theme::TEXT);
-        let switch = [row[0] + row[2] - 30.0, row[1] + 5.0, 22.0, 10.0];
-        p.rounded(switch, if m.enabled { theme::ON } else { theme::BUTTON });
-        let knob_x = if m.enabled {
-            switch[0] + switch[2] - 9.0
-        } else {
-            switch[0] + 1.0
+    /// A press of mouse `button` at `at`: true when the screen took it.
+    pub fn mouse_pressed(&mut self, at: [f32; 2], button: i32, modules: &mut [Module]) -> bool {
+        let Some((_, r, target)) = self.target_at(at) else {
+            return false;
         };
-        p.rounded([knob_x, switch[1] + 1.0, 8.0, 8.0], theme::TEXT);
-        if let Page::Options(i) = self.page {
-            self.hits.push((row, Target::Toggle(i)));
+        if button == 1 {
+            // Right-click on an element opens its settings.
+            if let Target::Element(i) = target {
+                self.open_options(i);
+                return true;
+            }
+            return false;
         }
-
-        // Placeholder rows for settings the module will have.
-        for (n, label) in ["Position", "Scale", "Colour"].into_iter().enumerate() {
-            let r = [ax, ay + 94.0 + n as f32 * 24.0, aw, 20.0];
-            p.rounded(r, fade(theme::CARD, 0.6));
-            p.text(label, [r[0] + 8.0, r[1] + 7.0], theme::TEXT_FAINT);
-            let soon = "Coming soon";
-            let w = p.width(soon);
-            p.text(soon, [r[0] + r[2] - w - 8.0, r[1] + 7.0], theme::TEXT_FAINT);
-        }
-    }
-
-    /// A press of mouse `button` at `at`: true when the menu took it.
-    pub fn click(&mut self, at: [f32; 2], button: i32, modules: &mut [Module]) -> bool {
         if button != 0 {
             return false;
         }
-        let Some(&(_, target)) = self.hits.iter().rev().find(|(r, _)| inside(*r, at)) else {
-            return false;
-        };
         match target {
             Target::Tab(tab) => {
                 self.tab = tab;
                 self.page = Page::Grid;
                 self.scroll = 0.0;
             }
-            Target::Toggle(i) => modules[i].enabled = !modules[i].enabled,
-            Target::Options(i) => self.page = Page::Options(i),
-            Target::Back => self.page = Page::Grid,
+            Target::Toggle(i) => {
+                modules[i].enabled = !modules[i].enabled;
+                self.dirty = true;
+            }
+            Target::Options(i) => {
+                self.page = Page::Options(i);
+                self.scroll = 0.0;
+            }
+            Target::Back => {
+                self.page = Page::Grid;
+                self.scroll = 0.0;
+            }
             Target::ClearSearch => {
                 self.search.clear();
                 self.scroll = 0.0;
+            }
+            Target::Setting { module, setting } => match &mut modules[module].settings[setting] {
+                Setting::Toggle { value, .. } => {
+                    *value = !*value;
+                    self.dirty = true;
+                }
+                Setting::Slider { .. } => {
+                    // The track is the hit box less the 4 pixels each side that make it easy to grab.
+                    let track = [r[0] + 4.0, r[2] - 8.0];
+                    self.drag = Some(Drag::Slider {
+                        module,
+                        setting,
+                        track,
+                    });
+                    self.slide(at, modules);
+                }
+                Setting::Colour { .. } => {}
+            },
+            Target::Swatch {
+                module,
+                setting,
+                swatch,
+            } => {
+                if let Setting::Colour { value, .. } = &mut modules[module].settings[setting] {
+                    *value = PALETTE[swatch];
+                    self.dirty = true;
+                }
+            }
+            Target::ResetModule(i) => {
+                modules[i].reset();
+                self.dirty = true;
+            }
+            Target::EditHud => {
+                self.view = View::Editor;
+            }
+            Target::OpenMenu => {
+                self.view = View::Menu;
+                self.opened = Instant::now();
+            }
+            Target::ResetLayout => {
+                for m in modules.iter_mut() {
+                    m.place = m.default_place;
+                    if let Some(s) = m.settings.iter_mut().find(|s| s.key() == "scale") {
+                        s.reset();
+                    }
+                }
+                self.dirty = true;
+            }
+            Target::Element(i) => {
+                let Some(&(_, er)) = self.elements.iter().find(|(m, _)| *m == i) else {
+                    return true;
+                };
+                self.drag = Some(Drag::Element {
+                    module: i,
+                    grab: [at[0] - er[0], at[1] - er[1]],
+                });
             }
         }
         true
     }
 
-    /// A mouse wheel turn of `dy` notches with the mouse at `at`.
-    pub fn scroll(&mut self, at: [f32; 2], dy: f64) {
-        if inside(self.content, at) {
-            self.scroll = (self.scroll - dy as f32 * SCROLL_STEP).clamp(0.0, self.max_scroll);
+    /// Moves the dragged slider to `at`.
+    fn slide(&mut self, at: [f32; 2], modules: &mut [Module]) {
+        if let Some(Drag::Slider {
+            module,
+            setting,
+            track,
+        }) = self.drag
+            && let Setting::Slider { min, max, .. } = modules[module].settings[setting]
+        {
+            let f = ((at[0] - track[0]) / track[1].max(1.0)).clamp(0.0, 1.0);
+            modules[module].settings[setting].set_slider(min + f * (max - min));
+            self.dirty = true;
         }
     }
 
-    /// A typed character: it goes into the search box.
+    /// The mouse moved to `at` with a button held.
+    pub fn mouse_dragged(&mut self, at: [f32; 2], modules: &mut [Module]) -> bool {
+        match self.drag {
+            Some(Drag::Slider { .. }) => {
+                self.slide(at, modules);
+                true
+            }
+            Some(Drag::Element { module, grab }) => {
+                self.move_element(module, [at[0] - grab[0], at[1] - grab[1]], modules);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Puts element `module`'s top left near `to`, snapped to the screen's edges and middle and
+    /// to the other elements' edges, and remembers the guides it snapped to.
+    fn move_element(&mut self, module: usize, to: [f32; 2], modules: &mut [Module]) {
+        let Some(&(_, r)) = self.elements.iter().find(|(m, _)| *m == module) else {
+            return;
+        };
+        let [sw, sh] = self.screen;
+        let (w, h) = (r[2], r[3]);
+        let others: Vec<[f32; 4]> = self
+            .elements
+            .iter()
+            .filter(|(m, _)| *m != module)
+            .map(|(_, r)| *r)
+            .collect();
+        // For each axis: candidate (guide line, the top-left it gives).
+        let snap = |pos: f32, len: f32, screen: f32, starts: Vec<f32>, ends: Vec<f32>| {
+            let mut best: Option<(f32, f32, f32)> = None; // (distance, new pos, guide)
+            let mut try_at = |guide: f32, new_pos: f32| {
+                let d = (new_pos - pos).abs();
+                if d <= SNAP && best.is_none_or(|(bd, _, _)| d < bd) {
+                    best = Some((d, new_pos, guide));
+                }
+            };
+            try_at(hud::MARGIN, hud::MARGIN);
+            try_at(screen - hud::MARGIN, screen - hud::MARGIN - len);
+            try_at(screen / 2.0, (screen - len) / 2.0);
+            for s in starts {
+                try_at(s, s);
+                try_at(s, s - len);
+            }
+            for e in ends {
+                try_at(e, e);
+                try_at(e, e - len);
+            }
+            match best {
+                Some((_, p, g)) => (p, Some(g)),
+                None => (pos, None),
+            }
+        };
+        let (x, gx) = snap(
+            to[0],
+            w,
+            sw,
+            others.iter().map(|o| o[0]).collect(),
+            others.iter().map(|o| o[0] + o[2]).collect(),
+        );
+        let (y, gy) = snap(
+            to[1],
+            h,
+            sh,
+            others.iter().map(|o| o[1]).collect(),
+            others.iter().map(|o| o[1] + o[3]).collect(),
+        );
+        // Guides on the screen's own edges add nothing to see.
+        let edge = |g: Option<f32>, s: f32| g.filter(|g| *g > hud::MARGIN && *g < s - hud::MARGIN);
+        self.guides = [edge(gx, sw), edge(gy, sh)];
+        let x = x.clamp(hud::MARGIN, (sw - w - hud::MARGIN).max(hud::MARGIN));
+        let y = y.clamp(hud::MARGIN, (sh - h - hud::MARGIN).max(hud::MARGIN));
+        modules[module].place = Some(Place {
+            x: x / sw.max(1.0),
+            y: y / sh.max(1.0),
+        });
+        if let Some(e) = self.elements.iter_mut().find(|(m, _)| *m == module) {
+            e.1 = [x, y, w, h];
+        }
+        self.dirty = true;
+    }
+
+    /// A mouse button let go: a drag ends.
+    pub fn mouse_released(&mut self) -> bool {
+        self.guides = [None, None];
+        self.drag.take().is_some()
+    }
+
+    /// A mouse wheel turn of `dy` notches with the mouse at `at`: scrolls the menu, or resizes the
+    /// HUD element under the mouse in the editor.
+    pub fn scroll(&mut self, at: [f32; 2], dy: f64, modules: &mut [Module]) -> bool {
+        match self.view {
+            View::Menu => {
+                if inside(self.content, at) {
+                    self.scroll =
+                        (self.scroll - dy as f32 * SCROLL_STEP).clamp(0.0, self.max_scroll);
+                }
+                true
+            }
+            View::Editor => {
+                let Some((_, _, Target::Element(i))) = self.target_at(at) else {
+                    return false;
+                };
+                if let Some(s) = modules[i].settings.iter_mut().find(|s| s.key() == "scale")
+                    && let Setting::Slider { value, .. } = *s
+                {
+                    s.set_slider(value + dy.signum() as f32 * SCALE_STEP);
+                    self.dirty = true;
+                }
+                true
+            }
+        }
+    }
+
+    /// A typed character: it goes into the search box while the menu is open.
     pub fn typed(&mut self, c: char) -> bool {
-        if c.is_control() || self.search.chars().count() >= SEARCH_MAX {
+        if self.view != View::Menu || c.is_control() || self.search.chars().count() >= SEARCH_MAX {
             return false;
         }
         self.search.push(c);
@@ -523,6 +1160,9 @@ impl Menu {
 
     /// Backspace: removes the last character of the search.
     pub fn backspace(&mut self) -> bool {
+        if self.view != View::Menu {
+            return false;
+        }
         let took = self.search.pop().is_some();
         if took {
             self.scroll = 0.0;
@@ -532,212 +1172,4 @@ impl Menu {
 }
 
 #[cfg(test)]
-mod tests {
-    //! The menu drawn on a fake `DrawContext` that keeps the calls, so layout and clicks are
-    //! checked without the game. `HORIZON_QOL_PREVIEW=<dir>` also writes each frame as an SVG.
-    use super::*;
-    use crate::modules;
-    use mod_api::GuiClipRefusal;
-    use std::fmt::Write as _;
-    use std::time::Duration;
-
-    /// The game's font is about 6 GUI pixels a character.
-    const CHAR_W: f32 = 6.0;
-
-    #[derive(Default)]
-    struct Recorder {
-        size: [f32; 2],
-        svg: String,
-        texts: Vec<(String, [f32; 2])>,
-        clips: Vec<[f32; 4]>,
-    }
-
-    fn colour(argb: u32) -> String {
-        let a = (argb >> 24) as f32 / 255.0;
-        format!(
-            "rgba({},{},{},{a:.3})",
-            (argb >> 16) & 0xFF,
-            (argb >> 8) & 0xFF,
-            argb & 0xFF
-        )
-    }
-
-    impl Recorder {
-        /// The SVG attribute that cuts a shape to the innermost open clip.
-        fn clip_attr(&self) -> String {
-            match self.clips.len() {
-                0 => String::new(),
-                n => format!(" clip-path=\"url(#c{})\"", n - 1),
-            }
-        }
-    }
-
-    impl DrawContext for Recorder {
-        fn size(&self) -> [f32; 2] {
-            self.size
-        }
-        fn fill(&mut self, [x, y, w, h]: [f32; 4], argb: u32) {
-            let clip = self.clip_attr();
-            let _ = writeln!(
-                self.svg,
-                "<rect x='{x}' y='{y}' width='{w}' height='{h}' fill='{}'{clip}/>",
-                colour(argb)
-            );
-        }
-        fn text(&mut self, text: &str, [x, y]: [f32; 2], argb: u32, _: bool) {
-            let clip = self.clip_attr();
-            let escaped = text
-                .replace('&', "&amp;")
-                .replace('<', "&lt;")
-                .replace('>', "&gt;");
-            let _ = writeln!(
-                self.svg,
-                "<text x='{x}' y='{}' fill='{}' font-size='8' font-family='monospace' textLength='{}' lengthAdjust='spacingAndGlyphs'{clip}>{escaped}</text>",
-                y + 7.0,
-                colour(argb),
-                self.text_width(text)
-            );
-            self.texts.push((text.to_owned(), [x, y]));
-        }
-        fn text_width(&self, text: &str) -> f32 {
-            text.chars().count() as f32 * CHAR_W
-        }
-        fn push_clip(&mut self, [x, y, w, h]: [f32; 4]) -> Result<(), GuiClipRefusal> {
-            let _ = writeln!(
-                self.svg,
-                "<clipPath id='c{}'><rect x='{x}' y='{y}' width='{w}' height='{h}'/></clipPath>",
-                self.clips.len()
-            );
-            self.clips.push([x, y, w, h]);
-            Ok(())
-        }
-        fn pop_clip(&mut self) -> Result<(), GuiClipRefusal> {
-            self.clips.pop();
-            Ok(())
-        }
-    }
-
-    fn opened() -> Menu {
-        Menu {
-            opened: Instant::now() - Duration::from_secs(1),
-            ..Menu::default()
-        }
-    }
-
-    fn frame(
-        menu: &mut Menu,
-        size: [f32; 2],
-        mouse: [f32; 2],
-        mods: &[Module],
-        name: &str,
-    ) -> Recorder {
-        let mut r = Recorder {
-            size,
-            ..Recorder::default()
-        };
-        menu.draw(&mut r, size, mouse, mods, "Right Shift");
-        if let Ok(dir) = std::env::var("HORIZON_QOL_PREVIEW") {
-            let [w, h] = size;
-            let svg = format!(
-                "<svg xmlns='http://www.w3.org/2000/svg' width='{}' height='{}' viewBox='0 0 {w} {h}'>\
-                 <rect width='{w}' height='{h}' fill='#3a5a40'/><rect width='{w}' height='{h}' fill='rgba(0,0,0,0.45)'/>\n{}</svg>",
-                w * 3.0,
-                h * 3.0,
-                r.svg
-            );
-            std::fs::write(format!("{dir}/{name}.svg"), svg).unwrap();
-        }
-        r
-    }
-
-    fn centre_of(menu: &Menu, target: Target) -> [f32; 2] {
-        let (r, _) = menu.hits.iter().find(|(_, t)| *t == target).expect("drawn");
-        [r[0] + r[2] / 2.0, r[1] + r[3] / 2.0]
-    }
-
-    #[test]
-    fn clicking_a_bar_toggles_its_module() {
-        let mut mods = modules::defaults();
-        let mut menu = opened();
-        frame(&mut menu, [480.0, 270.0], [0.0, 0.0], &mods, "grid");
-        let at = centre_of(&menu, Target::Toggle(0));
-        assert!(menu.click(at, 0, &mut mods));
-        assert!(mods[0].enabled);
-        frame(&mut menu, [480.0, 270.0], at, &mods, "grid-hover");
-        assert!(menu.click(at, 0, &mut mods));
-        assert!(!mods[0].enabled);
-        // A right click does nothing.
-        assert!(!menu.click(at, 1, &mut mods));
-    }
-
-    #[test]
-    fn tabs_and_search_filter_the_grid() {
-        let mut mods = modules::defaults();
-        let mut menu = opened();
-        frame(&mut menu, [480.0, 270.0], [0.0, 0.0], &mods, "all");
-        let at = centre_of(&menu, Target::Tab(Some(Category::Visual)));
-        assert!(menu.click(at, 0, &mut mods));
-        let r = frame(&mut menu, [480.0, 270.0], at, &mods, "visual");
-        assert!(r.texts.iter().any(|(t, _)| t == "Fullbright"));
-        assert!(!r.texts.iter().any(|(t, _)| t == "Zoom"));
-
-        let mut menu = opened();
-        for c in "zoo".chars() {
-            assert!(menu.typed(c));
-        }
-        let r = frame(&mut menu, [480.0, 270.0], [0.0, 0.0], &mods, "search");
-        let names: Vec<_> = menu
-            .visible(&mods)
-            .into_iter()
-            .map(|i| mods[i].name)
-            .collect();
-        assert_eq!(names, ["Zoom"]);
-        assert!(r.texts.iter().any(|(t, _)| t.starts_with("zoo")));
-        assert!(menu.backspace());
-        assert_eq!(menu.search, "zo");
-        let at = centre_of(&menu, Target::ClearSearch);
-        assert!(menu.click(at, 0, &mut mods));
-        assert!(menu.search.is_empty());
-    }
-
-    #[test]
-    fn options_page_opens_and_goes_back() {
-        let mut mods = modules::defaults();
-        let mut menu = opened();
-        frame(&mut menu, [480.0, 270.0], [0.0, 0.0], &mods, "grid");
-        let at = centre_of(&menu, Target::Options(2));
-        assert!(menu.click(at, 0, &mut mods));
-        let r = frame(&mut menu, [480.0, 270.0], [0.0, 0.0], &mods, "options");
-        assert!(r.texts.iter().any(|(t, _)| t == mods[2].name));
-        let at = centre_of(&menu, Target::Toggle(2));
-        assert!(menu.click(at, 0, &mut mods));
-        assert!(mods[2].enabled);
-        frame(&mut menu, [480.0, 270.0], [0.0, 0.0], &mods, "options-on");
-        let at = centre_of(&menu, Target::Back);
-        assert!(menu.click(at, 0, &mut mods));
-        assert!(menu.page == Page::Grid);
-    }
-
-    #[test]
-    fn the_grid_scrolls_and_fits_small_screens() {
-        let mods = modules::defaults();
-        let mut menu = opened();
-        // GUI scale 4 on a 1280 x 720 window is 320 x 180.
-        let size = [320.0, 180.0];
-        frame(&mut menu, size, [0.0, 0.0], &mods, "small");
-        assert!(menu.max_scroll > 0.0);
-        let centre = [
-            menu.content[0] + menu.content[2] / 2.0,
-            menu.content[1] + menu.content[3] / 2.0,
-        ];
-        menu.scroll(centre, -100.0);
-        assert_eq!(menu.scroll, menu.max_scroll);
-        frame(&mut menu, size, centre, &mods, "small-scrolled");
-        for (r, _) in &menu.hits {
-            assert!(r[0] >= 0.0 && r[1] >= 0.0 && r[0] + r[2] <= size[0] && r[1] + r[3] <= size[1]);
-        }
-        // Scrolling outside the grid does nothing.
-        menu.scroll([1.0, 1.0], 100.0);
-        assert_eq!(menu.scroll, menu.max_scroll);
-    }
-}
+mod tests;
