@@ -2,5 +2,10 @@
   "key.horizon_qol.open_menu": "Open Mod Menu",
   "key.horizon_qol.zoom": "Zoom",
   "key.horizon_qol.toggle_sprint": "Toggle Sprint",
-  "key.horizon_qol.toggle_sneak": "Toggle Sneak"
+  "key.horizon_qol.toggle_sneak": "Toggle Sneak",
+  "voice_chat.hk_menu": "Voice Chat Menu",
+  "voice_chat.hk_ptt": "Push to Talk",
+  "voice_chat.hk_whisper": "Whisper",
+  "voice_chat.hk_mute": "Mute Microphone",
+  "voice_chat.hk_disable": "Voice Chat Off / On"
 }

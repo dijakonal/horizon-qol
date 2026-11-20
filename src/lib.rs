@@ -12,6 +12,9 @@ mod modules;
 mod previews;
 mod settings;
 mod ui;
+/// Voice chat, public so its game-side code (`[[native.mixin]]`) reaches it as
+/// `mod_horizon_qol::voice`.
+pub mod voice;
 
 use mod_api::text::TextContent;
 use mod_api::{
@@ -40,7 +43,7 @@ const DEFAULT_KEY: &str = "key.keyboard.right.shift";
 const ZOOM: &str = modules::MAP_ZOOM;
 const ZOOM_KEY: &str = "key.keyboard.c";
 /// The keys that switch Toggle Sprint and Toggle Sneak; sneak starts unbound.
-const SPRINT_KEY: &str = "key.keyboard.v";
+const SPRINT_KEY: &str = "key.keyboard.y";
 const SNEAK_KEY: &str = "key.keyboard.unknown";
 /// How long a let-go key takes to fade out in Keystrokes, in milliseconds.
 const FADE_MS: f32 = 160.0;
@@ -136,7 +139,7 @@ impl HorizonQol {
         host: &dyn ClientHost,
         f: impl FnOnce(&mut ui::Gui, &mut Vec<Module>) -> R,
     ) -> Option<R> {
-        if host.mod_screen() != Some(ID) {
+        if host.mod_screen() != Some(ID) || voice::menu_open(host) {
             return None;
         }
         let mut guard = self.state();
@@ -152,6 +155,7 @@ impl HorizonQol {
         if host.mod_screen().is_some() || !host.mod_screen_open(ID) {
             return false;
         }
+        voice::screen_taken();
         if let Some(state) = self.state().as_mut() {
             state.gui = Some(ui::Gui::new(ui::View::Editor));
         }
@@ -218,17 +222,27 @@ fn save_config(host: &dyn ClientHost, state: &State) {
 
 /// The key each of the mod's Controls mappings is bound to, as the menu shows it.
 fn binds(host: &dyn ClientHost) -> Vec<(&'static str, String)> {
-    [OPEN_MENU, ZOOM, modules::MAP_SPRINT, modules::MAP_SNEAK]
-        .into_iter()
-        .map(|id| {
-            let key = host.mod_key(ID, id).map(|(k, _)| k);
-            let label = match key.as_deref() {
-                None | Some("key.keyboard.unknown") => "Not bound".to_owned(),
-                Some(k) => key_label(k),
-            };
-            (id, label)
-        })
-        .collect()
+    [
+        OPEN_MENU,
+        ZOOM,
+        modules::MAP_SPRINT,
+        modules::MAP_SNEAK,
+        voice::engine::KEY_MENU,
+        voice::engine::KEY_PTT,
+        voice::engine::KEY_WHISPER,
+        voice::engine::KEY_MUTE,
+        voice::engine::KEY_DISABLE,
+    ]
+    .into_iter()
+    .map(|id| {
+        let key = host.mod_key(ID, id).map(|(k, _)| k);
+        let label = match key.as_deref() {
+            None | Some("key.keyboard.unknown") => "Not bound".to_owned(),
+            Some(k) => key_label(k),
+        };
+        (id, label)
+    })
+    .collect()
 }
 
 fn unix_seconds() -> u64 {
@@ -539,6 +553,7 @@ impl ItemPart for EnderTooltip {
 #[mod_api::horizon_mod]
 impl Hooks for HorizonQol {
     fn register(&self, r: &mut dyn Registrar, _: &RegistrationContext) {
+        voice::register(r);
         // Every shulker box by id: the item tag isn't certain to exist in every version.
         for dye in [
             "",
@@ -587,7 +602,9 @@ impl Hooks for HorizonQol {
     }
 
     fn client_tick_pre(&self, host: &mut dyn ClientHost, _: &mut ClientTickPreEvent) {
-        if self.close.swap(false, Ordering::Relaxed) {
+        let voice_on = self.state().as_ref().is_some_and(|s| s.on(Id::VoiceChat));
+        voice::tick(host, voice_on);
+        if self.close.swap(false, Ordering::Relaxed) && !voice::menu_open(host) {
             host.mod_screen_close(ID);
         }
         // The Controls mapping's presses. `input_key` normally opened the screen at the press
@@ -847,7 +864,7 @@ impl Hooks for HorizonQol {
     }
 
     fn screen_closing(&self, host: &dyn ClientHost, _: &mut ScreenClosingEvent<'_>) {
-        if host.mod_screen() != Some(ID) {
+        if host.mod_screen() != Some(ID) || voice::menu_open(host) {
             return;
         }
         if let Some(state) = self.state().as_mut()
@@ -863,7 +880,7 @@ impl Hooks for HorizonQol {
         host: &dyn ClientHost,
         _: &mut ScreenTransparentBackgroundEvent<'_>,
     ) -> Flow {
-        if host.mod_screen() != Some(ID) {
+        if host.mod_screen() != Some(ID) || voice::menu_open(host) {
             return Flow::Continue;
         }
         let view = self
@@ -885,6 +902,10 @@ impl Hooks for HorizonQol {
             return;
         }
         if host.mod_screen() != Some(ID) {
+            return;
+        }
+        if voice::menu_open(host) {
+            voice::render(host, event);
             return;
         }
         let size = event.draw.size();
@@ -915,6 +936,9 @@ impl Hooks for HorizonQol {
         event: &mut ScreenMouseButtonPressedPreEvent<'_>,
     ) -> Flow {
         let (at, button) = (event.screen.mouse, event.button);
+        if voice::menu_open(host) {
+            return voice::mouse_pressed(host, at, button);
+        }
         flow(
             self.with_gui(host, |gui, modules| gui.mouse_pressed(at, button, modules))
                 .unwrap_or(false),
@@ -924,8 +948,11 @@ impl Hooks for HorizonQol {
     fn screen_mouse_button_released_pre(
         &self,
         host: &dyn ClientHost,
-        _: &mut ScreenMouseButtonReleasedPreEvent<'_>,
+        event: &mut ScreenMouseButtonReleasedPreEvent<'_>,
     ) -> Flow {
+        if voice::menu_open(host) {
+            return voice::mouse_released(host, event.button);
+        }
         flow(
             self.with_gui(host, |gui, _| gui.mouse_released())
                 .unwrap_or(false),
@@ -938,6 +965,9 @@ impl Hooks for HorizonQol {
         event: &mut ScreenMouseDraggedPreEvent<'_>,
     ) -> Flow {
         let at = event.screen.mouse;
+        if voice::menu_open(host) {
+            return voice::mouse_dragged(at, event.button);
+        }
         flow(
             self.with_gui(host, |gui, modules| gui.mouse_dragged(at, modules))
                 .unwrap_or(false),
@@ -950,6 +980,9 @@ impl Hooks for HorizonQol {
         event: &mut ScreenMouseScrolledPreEvent<'_>,
     ) -> Flow {
         let (at, dy) = (event.screen.mouse, event.scroll[1]);
+        if voice::menu_open(host) {
+            return voice::mouse_scrolled(dy);
+        }
         flow(
             self.with_gui(host, |gui, modules| gui.scroll(at, dy, modules))
                 .unwrap_or(false),
@@ -963,6 +996,9 @@ impl Hooks for HorizonQol {
     ) -> Flow {
         if host.mod_screen() != Some(ID) {
             return Flow::Continue;
+        }
+        if voice::menu_open(host) {
+            return voice::key_pressed(host, event.key, event.modifiers);
         }
         if !event.repeat && event.key == bound_key(host) {
             self.close.store(true, Ordering::Relaxed);
@@ -981,7 +1017,46 @@ impl Hooks for HorizonQol {
         event: &mut ScreenCharTypedPreEvent<'_>,
     ) -> Flow {
         let c = event.c;
+        if voice::menu_open(host) {
+            return voice::char_typed(c);
+        }
         flow(self.with_gui(host, |gui, _| gui.typed(c)).unwrap_or(false))
+    }
+
+    fn register_configs(
+        &self,
+        _: mod_api::HostSide,
+        event: &mut mod_api::RegisterConfigsEvent<'_>,
+    ) {
+        voice::register_configs(event);
+    }
+
+    fn config_loading(&self, _: mod_api::HostSide, event: &mut mod_api::ConfigLoadingEvent<'_>) {
+        voice::config_loading(event);
+    }
+
+    fn config_reloading(
+        &self,
+        _: mod_api::HostSide,
+        event: &mut mod_api::ConfigReloadingEvent<'_>,
+    ) {
+        voice::config_reloading(event);
+    }
+
+    fn client_disconnecting(
+        &self,
+        host: &dyn ClientHost,
+        _: &mut mod_api::ClientDisconnectingEvent,
+    ) {
+        voice::stop(host);
+    }
+
+    fn client_stopping(&self, host: &mut dyn ClientHost, _: &mut mod_api::ClientStoppingEvent) {
+        voice::stop(host);
+    }
+
+    fn client_packet(&self, _: &mut dyn ClientHost, event: &mut mod_api::ClientPacketEvent<'_>) {
+        voice::packet(event);
     }
 }
 

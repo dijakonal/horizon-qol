@@ -1,7 +1,7 @@
 id = "horizon_qol"
 name = "Horizon QoL"
 version = "0.1.0"
-description = "Quality-of-life tweaks with a client-style mod menu. Press Right Shift in game to open it."
+description = "Quality-of-life tweaks with a client-style mod menu, HUD modules, container previews and Simple Voice Chat compatible voice chat. Press Right Shift in game to open it."
 authors = ["dijakonal"]
 # A native mod: Rust in src/, compiled by the launcher against the game build [native] pins, beside data/ and assets/.
 api = "0.2"
@@ -14,3 +14,77 @@ game = "26.3"
 # The Nightly of 2026-11-20. `cargo horizon-mod update` moves the pin to a newer build.
 horizon = "0a875da91dbb0fdcb7ba8c42c11341aa229af51a"
 mixins = "e59da9094f0c2fdda6c627fe9eff22dec6a906f0"
+
+# Voice chat's game-side code (from JKearnsl's Voice Chat, MIT): the audio path, its tick,
+# its HUD and the speaking icon on name tags, and its key labels and language.
+[[native.module]]
+id = "audio"
+file = "crates/horizon-client/src/game/network/remote/mod.rs"
+name = "voicechat_audio"
+source = "src/voice/mixins/audio.rs"
+
+[[native.module]]
+id = "key_labels"
+file = "crates/horizon-client/src/game/modding/mods/mod.rs"
+name = "voicechat_key_labels"
+source = "src/voice/mixins/key_labels.rs"
+
+[[native.mixin]]
+id = "tick"
+target = "horizon_client::game::remote::Game<'_>::tick_remote"
+kind = "HEAD"
+helper = "src/voice/mixins/tick.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+]
+
+[[native.mixin]]
+id = "language"
+target = "horizon_client::game::options::Game<'_>::load_language"
+kind = "HEAD"
+helper = "src/voice/mixins/language.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "code", ty = "&str", value = "code" },
+]
+
+[[native.mixin]]
+id = "options"
+target = "horizon_client::game::options::Game<'_>::open_options_at"
+kind = "HEAD"
+helper = "src/voice/mixins/options.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+]
+
+[[native.mixin]]
+id = "hud"
+target = "horizon_client::game::extras::Game<'_>::draw_extras"
+kind = "AFTER_CALL"
+selector = "self.native_render_gui_post"
+require = 1
+ordinal = 0
+result = "()"
+helper = "src/voice/mixins/hud.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "batch", ty = "&mut horizon_client::hud::HudBatch", value = "&mut *batch" },
+  { name = "corners", ty = "&mut horizon_client::extras_hud::Corners", value = "$local_mut:corners:0" },
+]
+
+[[native.mixin]]
+id = "name_tag"
+target = "horizon_client::game::names::Game<'_>::styled_name_tag_quads"
+kind = "HEAD"
+helper = "src/voice/mixins/name_tag.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "o", ty = "glam::DVec3", value = "o" },
+  { name = "lines", ty = "&[(horizon_client::text::Text, f64)]", value = "lines" },
+  { name = "text_alpha", ty = "u32", value = "text_alpha" },
+  { name = "background", ty = "bool", value = "background" },
+  { name = "text_layer", ty = "u32", value = "text_layer" },
+  { name = "light", ty = "u32", value = "light" },
+  { name = "unit", ty = "f32", value = "unit" },
+  { name = "out", ty = "&mut Vec<horizon_client::mesher::Vertex>", value = "&mut *out" },
+]

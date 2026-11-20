@@ -27,8 +27,13 @@ module's settings page shows the key it uses.
 | --- | --- | --- |
 | Open Mod Menu | Right Shift | Opens the HUD editor |
 | Zoom | C | Zooms while held, or on and off in Toggle mode |
-| Toggle Sprint | V | Sprinting on or off, while the module is on |
+| Toggle Sprint | Y | Sprinting on or off, while the module is on |
 | Toggle Sneak | not bound | Sneaking on or off, while the module is on |
+| Voice Chat Menu | V | Opens voice chat's own menu (as Simple Voice Chat does) |
+| Push to Talk | Caps Lock | Talks while held, in push-to-talk mode |
+| Whisper | not bound | Talks to the players right next to you only |
+| Mute Microphone | J | Mutes or unmutes your microphone |
+| Voice Chat Off / On | K | Turns voice chat off or on for the moment |
 
 ![Resizing an element by its corner](docs/resize.png)
 
@@ -51,8 +56,36 @@ module's settings page shows the key it uses.
 | Toggle Sprint | Its key switches sprinting on and off | Key, status on the HUD, stay on after a restart |
 | Toggle Sneak | Its key switches sneaking on and off | Key, status on the HUD |
 | Zoom | Zoom in; scroll while zooming to zoom more or less | Key, hold or toggle, zoom amount, smooth, scroll to adjust, slower mouse |
+| Voice Chat | Proximity voice chat on servers that run Simple Voice Chat | Its keys; the rest is in its own menu (V) |
 | Shulker Preview | A shulker box's tooltip shows its items as a grid of slots, tinted with the box's colour | Always or hold Shift, tint, Shift hint |
 | Ender Chest Preview | An ender chest's tooltip shows your ender chest as it was when you last opened one | Always or hold Shift, when it was last seen, Shift hint |
+
+### Voice chat
+
+Talk to the players near you on any server that runs the
+[Simple Voice Chat](https://modrinth.com/plugin/simple-voice-chat) plugin or mod, and they hear
+you, whether they play Horizon or Java Edition. It has positional audio, push-to-talk or voice
+activation, groups (with passwords), whispering, and per-player volume. Speaking icons show on
+the HUD and over players' heads.
+
+Press **V** for its own menu: microphone and speaker devices, voice levels, the activation
+threshold, groups and player volumes. Its settings are kept in
+`config/horizon_qol-client.toml`. The Voice Chat module's switch in the Horizon QoL menu turns all
+of it off: no connection, no microphone.
+
+- A server without Simple Voice Chat has no voice. The server's voice UDP port must be reachable
+  from your computer.
+- Privacy: while voice chat is on and connected, your microphone stays open for the live level
+  meter, also in push-to-talk mode. In push-to-talk mode, audio is sent only while Push to Talk or
+  Whisper is held (plus a short tail). Audio is never written to disk. Turning it off (K, or the
+  module's switch) closes the microphone.
+- Voice chat is [JKearnsl's Voice Chat for Horizon](https://github.com/JKearnsl/voice-chat) (MIT),
+  built into this mod. It is not made by or affiliated with Simple Voice Chat or its author. Its
+  Opus codec is a Rust port of libopus (BSD-3-Clause). Both licences are in `licenses/`.
+- Voice chat changes some of the game's own code (its audio output, HUD and name tags), so the
+  launcher downloads a larger SDK and builds a game patch the first time. It also builds two
+  crates.io packages (`aes-gcm` and its dependencies), pinned in `Cargo.lock`. The launcher asks
+  before running their build scripts.
 
 ### Container previews
 
@@ -169,10 +202,12 @@ src/icons.rs              the pixel-art icons, drawn from small bitmaps
 src/hud.rs                what each HUD element shows, its size, and drawing it scaled; Keystrokes' three modes
 src/hud/keyboard.rs       the keyboard layouts and sizes, and Auto's layout detection
 src/hud/pad.rs            the controllers, drawn and shaded from circles and rounded rectangles
+src/voice/                voice chat: its engine, settings file, Opus codec (opus-rs) and game-side code (mixins)
 src/previews.rs           shulker box and ender chest previews: reading their items, the slot grid, the saved ender chests
 src/ui.rs                 the screen: the HUD editor and the mod menu
 src/ui/tests.rs           the screen's tests, with a fake draw context that can write SVG previews
-assets/horizon_qol/lang/  the key mappings' names in Options > Controls
+assets/horizon_qol/        the key mappings' names in Options > Controls, and voice chat's textures
+licenses/                 the licences of the code voice chat is built from
 ```
 
 ## Tests

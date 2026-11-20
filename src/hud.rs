@@ -367,7 +367,7 @@ pub fn content(m: &Module, data: &HudData) -> Option<Content> {
         Id::ToggleSneak => (m.bool("status") && data.sneak_toggled)
             .then(|| lines(vec!["Sneaking (Toggled)".into()]))
             .flatten(),
-        Id::Zoom | Id::ShulkerPreview | Id::EnderPreview => None,
+        Id::Zoom | Id::ShulkerPreview | Id::EnderPreview | Id::VoiceChat => None,
     }
 }
 

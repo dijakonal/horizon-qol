@@ -8,3 +8,6 @@ edition = "2024"
 # launcher builds against its own copy of the same build). Any other registry dependency must be
 # pinned with `horizon-launcher native-lock .` before building.
 horizon-mod-api = { path = ".horizon/sdk/api/crates/horizon-mod-api" }
+# Voice chat: AES-GCM for Simple Voice Chat's encrypted packets, and a Rust port of the Opus codec.
+aes-gcm = "0.10"
+opus-rs = { path = "src/voice/opus-rs" }

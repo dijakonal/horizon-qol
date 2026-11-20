@@ -40,6 +40,7 @@ pub enum Id {
     Zoom,
     ShulkerPreview,
     EnderPreview,
+    VoiceChat,
 }
 
 impl Id {
@@ -59,6 +60,7 @@ impl Id {
             Id::Zoom => "zoom",
             Id::ShulkerPreview => "shulker_preview",
             Id::EnderPreview => "ender_preview",
+            Id::VoiceChat => "voice_chat",
         }
     }
 }
@@ -424,6 +426,22 @@ pub fn defaults() -> Vec<Module> {
                 Setting::choice("show", "Show", 0, &["Always", "Hold Shift"]),
                 Setting::toggle("seen", "Say when it was last seen", true),
                 Setting::toggle("hint", "Say to hold Shift", true),
+            ],
+        ),
+        Module::new(
+            Id::VoiceChat,
+            "Voice Chat",
+            "Talk to nearby players on servers with Simple Voice Chat. Its menu key opens its own settings.",
+            Utility,
+            0xFF22C55E,
+            true,
+            None,
+            vec![
+                Setting::bind(crate::voice::engine::KEY_MENU, "Voice menu"),
+                Setting::bind(crate::voice::engine::KEY_PTT, "Push to talk"),
+                Setting::bind(crate::voice::engine::KEY_WHISPER, "Whisper"),
+                Setting::bind(crate::voice::engine::KEY_MUTE, "Mute microphone"),
+                Setting::bind(crate::voice::engine::KEY_DISABLE, "Turn voice off"),
             ],
         ),
         Module::new(
