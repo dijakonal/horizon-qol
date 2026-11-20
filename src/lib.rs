@@ -9,19 +9,24 @@
 mod hud;
 mod icons;
 mod modules;
+mod previews;
 mod settings;
 mod ui;
 
+use mod_api::text::TextContent;
 use mod_api::{
-    self, ClientHost, ClientPlayerLoggingInEvent, ClientTickPreEvent, ConfigPath, EquipmentSlot,
-    Flow, GuiRenderPostEvent, Hooks, Host, InputKeyEvent, KeyAction, KeyConflictContext,
-    KeyRegistration, MouseButtonPreEvent, MouseScrollingEvent, Registrar, RegistrationContext,
+    self, ClientHost, ClientPlayerLoggingInEvent, ClientTickPreEvent, ConfigPath,
+    ConfigPath as DataPath, EquipmentSlot, Flow, GuiRenderPostEvent, Hooks, Host, InputKeyEvent,
+    ItemPart, ItemTooltipEvent, KeyAction, KeyConflictContext, KeyRegistration,
+    MouseButtonPreEvent, MouseScrollingEvent, Registrar, RegistrationContext,
     ScreenCharTypedPreEvent, ScreenClosingEvent, ScreenKeyPressedPreEvent,
     ScreenMouseButtonPressedPreEvent, ScreenMouseButtonReleasedPreEvent,
     ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent, ScreenRenderPostEvent,
-    ScreenTransparentBackgroundEvent, Text, Zoom, ZoomEvent,
+    ScreenTransparentBackgroundEvent, Text, TooltipComponentDrawEvent, TooltipComponentEvent, Zoom,
+    ZoomEvent,
 };
 use modules::{Id, Module};
+use previews::Show;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
@@ -377,9 +382,188 @@ fn read_frame(host: &dyn ClientHost, state: &mut State) {
     state.data.glow = glow;
 }
 
+/// Whether either Shift key is held.
+fn shift(host: &dyn ClientHost) -> bool {
+    host.is_key_down("key.keyboard.left.shift") || host.is_key_down("key.keyboard.right.shift")
+}
+
+/// The world or server the player is in, as the remembered ender chest's file name.
+fn session_file(host: &dyn ClientHost) -> Option<String> {
+    let server = host.client_session().client_server()?;
+    match (server.save_folder, server.address) {
+        (Some(folder), _) => Some(previews::file_name("world", &folder)),
+        (None, Some(address)) => Some(previews::file_name("server", &address)),
+        (None, None) => None,
+    }
+}
+
+fn ender_path(file: &str) -> Option<DataPath> {
+    DataPath::new(&format!("ender_chests/{file}")).ok()
+}
+
+/// Reads the ender chest remembered for `file`.
+fn load_ender(host: &dyn ClientHost, file: &str) -> Option<(Vec<Option<mod_api::ItemStack>>, u64)> {
+    let bytes = host.data_files().read(&ender_path(file)?).ok()?;
+    previews::ender_from_nbt(host, &previews::decode(&bytes)?)
+}
+
+fn save_ender(host: &dyn ClientHost, file: &str, items: &[Option<mod_api::ItemStack>], seen: u64) {
+    if let Some(path) = ender_path(file) {
+        let bytes = previews::encode(&previews::ender_to_nbt(host, items, seen));
+        let _ = host.data_files().write(&path, &bytes);
+    }
+}
+
+/// The ender chest's screen: the game titles it with this translation key.
+fn is_ender_chest_screen(title: Option<&Text>) -> bool {
+    matches!(
+        title.map(|t| &t.content),
+        Some(TextContent::Translatable { key, .. }) if key == "container.enderchest"
+    )
+}
+
+/// The ender chest screen is open: its first 27 slots are the ender chest. They are kept for the
+/// tooltip, and saved when they change.
+fn remember_ender_chest(host: &dyn ClientHost) {
+    let Some(menu) = host.local_player().and_then(|p| p.container_menu(host)) else {
+        return;
+    };
+    let mut items = Vec::with_capacity(previews::SLOTS);
+    for slot in 0..previews::SLOTS {
+        match menu.slot(host, slot) {
+            Some(item) => items.push(item),
+            // The menu isn't there (yet): keep what was remembered.
+            None => return,
+        }
+    }
+    let now = unix_seconds();
+    let save = previews::with(|p| {
+        let changed = p.ender_items.as_deref() != Some(&items[..]);
+        // Seen now; the file is rewritten when the items change, or once a minute for the time.
+        let stale = now.saturating_sub(p.ender_seen) >= 60;
+        p.ender_items = Some(items.clone());
+        if changed || stale {
+            p.ender_seen = now;
+            p.session.clone()
+        } else {
+            None
+        }
+    });
+    if let Some(file) = save {
+        save_ender(host, &file, &items, now);
+    }
+}
+
+/// A shulker box's tooltip: its items as a grid of slots.
+struct ShulkerTooltip;
+
+#[mod_api::horizon_part]
+impl ItemPart for ShulkerTooltip {
+    fn tooltip_component(
+        &self,
+        host: &dyn ClientHost,
+        event: &mut TooltipComponentEvent<'_>,
+    ) -> Option<[f32; 2]> {
+        let show = previews::with(|s| s.shulker);
+        if !show.now(shift(host)) {
+            return None;
+        }
+        previews::contents(host, event.stack)?;
+        let [w, h] = previews::grid_size();
+        Some([w, h + 2.0])
+    }
+
+    fn tooltip_component_draw(
+        &self,
+        host: &dyn ClientHost,
+        event: &mut TooltipComponentDrawEvent<'_>,
+    ) {
+        let Some(items) = previews::contents(host, event.stack) else {
+            return;
+        };
+        let tint = previews::with(|s| s.shulker_tint).then(|| {
+            let id = event.stack.item().id(host);
+            previews::shulker_colour(&id)
+                .flatten()
+                .unwrap_or(previews::SHULKER_PURPLE)
+        });
+        let at = [event.origin[0], event.origin[1] + 2.0];
+        previews::draw_grid(&mut *event.draw, at, &items, tint);
+    }
+}
+
+/// An ender chest's tooltip: the ender chest as last seen here, or how to see it.
+struct EnderTooltip;
+
+#[mod_api::horizon_part]
+impl ItemPart for EnderTooltip {
+    fn tooltip_component(
+        &self,
+        host: &dyn ClientHost,
+        event: &mut TooltipComponentEvent<'_>,
+    ) -> Option<[f32; 2]> {
+        let _ = &event;
+        let (show, seen) = previews::with(|s| (s.ender, s.ender_items.is_some()));
+        if !show.now(shift(host)) {
+            return None;
+        }
+        if seen {
+            let [w, h] = previews::grid_size();
+            Some([w, h + 2.0])
+        } else {
+            let w = host
+                .text_width(&Text::literal(previews::ENDER_UNSEEN))
+                .unwrap_or(220);
+            Some([w as f32 + 2.0, 12.0])
+        }
+    }
+
+    fn tooltip_component_draw(
+        &self,
+        _: &dyn ClientHost,
+        event: &mut TooltipComponentDrawEvent<'_>,
+    ) {
+        let items = previews::with(|s| s.ender_items.clone());
+        let at = [event.origin[0], event.origin[1] + 2.0];
+        match items {
+            Some(items) => {
+                previews::draw_grid(&mut *event.draw, at, &items, Some(previews::ENDER_GREEN))
+            }
+            None => event
+                .draw
+                .text(previews::ENDER_UNSEEN, at, 0xFFAAAAAA, true),
+        }
+    }
+}
+
 #[mod_api::horizon_mod]
 impl Hooks for HorizonQol {
     fn register(&self, r: &mut dyn Registrar, _: &RegistrationContext) {
+        // Every shulker box by id: the item tag isn't certain to exist in every version.
+        for dye in [
+            "",
+            "white_",
+            "orange_",
+            "magenta_",
+            "light_blue_",
+            "yellow_",
+            "lime_",
+            "pink_",
+            "gray_",
+            "light_gray_",
+            "cyan_",
+            "purple_",
+            "blue_",
+            "brown_",
+            "green_",
+            "red_",
+            "black_",
+        ] {
+            let key = r.item_key(&format!("minecraft:{dye}shulker_box"));
+            r.item_part(key, ShulkerTooltip);
+        }
+        let ender_chest = r.item_key("minecraft:ender_chest");
+        r.item_part(ender_chest, EnderTooltip);
         r.register_key_mapping(
             KeyRegistration::new(OPEN_MENU, DEFAULT_KEY)
                 .label("key.horizon_qol.open_menu")
@@ -432,6 +616,36 @@ impl Hooks for HorizonQol {
             load_config(host, state);
         }
         read_player(host, state);
+
+        // The previews' settings, and the ender chest remembered for this world or server.
+        let shulker = state.module(Id::ShulkerPreview);
+        let ender = state.module(Id::EnderPreview);
+        let (s_show, s_tint) = (
+            Show::from(shulker.enabled, shulker.choice("show")),
+            shulker.bool("tint"),
+        );
+        let e_show = Show::from(ender.enabled, ender.choice("show"));
+        let session = session_file(host);
+        let changed = previews::with(|p| {
+            p.shulker = s_show;
+            p.shulker_tint = s_tint;
+            p.ender = e_show;
+            let changed = p.session != session;
+            if changed {
+                p.session = session.clone();
+                p.ender_items = None;
+            }
+            changed
+        });
+        if changed && let Some(file) = &session {
+            let loaded = load_ender(host, file);
+            previews::with(|p| {
+                if let Some((items, seen)) = loaded {
+                    p.ender_items = Some(items);
+                    p.ender_seen = seen;
+                }
+            });
+        }
 
         // The toggle keys: each press switches its module's state.
         let mut flip = |id: &str| {
@@ -507,6 +721,39 @@ impl Hooks for HorizonQol {
             }
             if host.playing() && event.key == bound_key(host) {
                 self.open(host);
+            }
+        }
+    }
+
+    /// The hint to hold Shift, for a preview that waits for it.
+    fn item_tooltip(&self, host: &dyn ClientHost, event: &mut ItemTooltipEvent<'_>) {
+        if shift(host) {
+            return;
+        }
+        let id = event.stack.item().id(host);
+        let module = if previews::shulker_colour(&id).is_some() {
+            Id::ShulkerPreview
+        } else if id == "minecraft:ender_chest" {
+            Id::EnderPreview
+        } else {
+            return;
+        };
+        let guard = self.state();
+        let Some(state) = guard.as_ref() else { return };
+        let m = state.module(module);
+        if m.enabled && m.choice("show") == 1 && m.bool("hint") {
+            if module == Id::ShulkerPreview && previews::contents(host, event.stack).is_none() {
+                return;
+            }
+            event
+                .lines
+                .push((Text::literal("Hold Shift to see inside"), 0xFF808080));
+        }
+        if module == Id::EnderPreview && m.enabled && m.bool("seen") {
+            let seen = previews::with(|p| p.ender_items.is_some().then_some(p.ender_seen));
+            if let Some(seen) = seen.filter(|s| *s > 0) {
+                let line = format!("Last seen {}", previews::ago(unix_seconds(), seen));
+                event.lines.push((Text::literal(line), 0xFF808080));
             }
         }
     }
@@ -633,6 +880,10 @@ impl Hooks for HorizonQol {
     }
 
     fn screen_render_post(&self, host: &dyn ClientHost, event: &mut ScreenRenderPostEvent<'_>) {
+        if is_ender_chest_screen(event.screen.title) {
+            remember_ender_chest(host);
+            return;
+        }
         if host.mod_screen() != Some(ID) {
             return;
         }

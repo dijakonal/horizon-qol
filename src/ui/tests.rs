@@ -169,6 +169,12 @@ impl DrawContext for Recorder {
         }
         Ok(())
     }
+    fn gui_draw_item_with(&mut self, _: &ItemStack, [x, y]: [f32; 2], text: Option<&str>) {
+        self.rect([x + 1.0, y + 1.0, 14.0, 14.0], 0xFF8A8A9A);
+        if let Some(t) = text {
+            self.label(t, [x + 17.0 - self.text_width(t), y + 9.0], 1.0, 0xFFFFFFFF);
+        }
+    }
     fn item_stack(&mut self, _: &ItemStack, [x, y]: [f32; 2], size: f32) -> bool {
         self.rect([x + 1.0, y + 1.0, size - 2.0, size - 2.0], 0xFF8A8A9A);
         true
@@ -725,4 +731,38 @@ fn a_choice_too_wide_for_its_row_steps_through_its_options() {
     }
     assert!(g.mouse_pressed(centre_of(&g, next), 0, &mut mods));
     assert_eq!(mods[ks].choice("kb_layout"), 1);
+}
+
+#[test]
+fn container_preview_grids() {
+    // A tooltip as the game draws one: its box, the item's name, then the grid under it.
+    let mut r = Recorder::new([420.0, 220.0]);
+    let [w, h] = crate::previews::grid_size();
+    let tooltip = |r: &mut Recorder, at: [f32; 2], name: &str, extra: f32| {
+        r.fill(
+            [at[0] - 3.0, at[1] - 3.0, w + 6.0, 12.0 + extra + 6.0],
+            0xF0100010,
+        );
+        r.fill([at[0] - 2.0, at[1] - 2.0, w + 4.0, 1.0], 0x505000FF);
+        r.text(name, at, 0xFFFFFFFF, true);
+    };
+    let empty = vec![None; crate::previews::SLOTS];
+    tooltip(&mut r, [10.0, 10.0], "Red Shulker Box", h + 2.0);
+    crate::previews::draw_grid(&mut r, [10.0, 22.0], &empty, Some(0xFFB02E26));
+    tooltip(&mut r, [10.0, 110.0], "Ender Chest", h + 2.0);
+    crate::previews::draw_grid(
+        &mut r,
+        [10.0, 122.0],
+        &empty,
+        Some(crate::previews::ENDER_GREEN),
+    );
+    tooltip(&mut r, [220.0, 10.0], "Ender Chest", 12.0);
+    r.text(
+        crate::previews::ENDER_UNSEEN,
+        [220.0, 22.0],
+        0xFFAAAAAA,
+        true,
+    );
+    r.write("previews");
+    assert_eq!([w, h], [170.0, 62.0]);
 }

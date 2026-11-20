@@ -51,6 +51,21 @@ module's settings page shows the key it uses.
 | Toggle Sprint | Its key switches sprinting on and off | Key, status on the HUD, stay on after a restart |
 | Toggle Sneak | Its key switches sneaking on and off | Key, status on the HUD |
 | Zoom | Zoom in; scroll while zooming to zoom more or less | Key, hold or toggle, zoom amount, smooth, scroll to adjust, slower mouse |
+| Shulker Preview | A shulker box's tooltip shows its items as a grid of slots, tinted with the box's colour | Always or hold Shift, tint, Shift hint |
+| Ender Chest Preview | An ender chest's tooltip shows your ender chest as it was when you last opened one | Always or hold Shift, when it was last seen, Shift hint |
+
+### Container previews
+
+![Shulker box and ender chest previews](docs/previews.png)
+
+Hover a shulker box anywhere (your inventory, a chest, the creative tabs) to see what's in it,
+slot for slot. The box carries its items, so this is always exact.
+
+The game sends your ender chest to your client only while one is open. So the ender chest
+preview shows what it held the last time you opened one, and the tooltip says how long ago that
+was. It is remembered separately for each world and server, and kept across restarts in
+`horizon-mod-data/horizon_qol/ender_chests/` in the game folder. Until you've opened your ender
+chest in a world or on a server, its tooltip says to open it once.
 
 Every element on the HUD also has these, in two groups:
 - **Text:** scale, colour, rainbow text and its speed, shadow, brackets `[ ]`, and line alignment.
@@ -154,6 +169,7 @@ src/icons.rs              the pixel-art icons, drawn from small bitmaps
 src/hud.rs                what each HUD element shows, its size, and drawing it scaled; Keystrokes' three modes
 src/hud/keyboard.rs       the keyboard layouts and sizes, and Auto's layout detection
 src/hud/pad.rs            the controllers, drawn and shaded from circles and rounded rectangles
+src/previews.rs           shulker box and ender chest previews: reading their items, the slot grid, the saved ender chests
 src/ui.rs                 the screen: the HUD editor and the mod menu
 src/ui/tests.rs           the screen's tests, with a fake draw context that can write SVG previews
 assets/horizon_qol/lang/  the key mappings' names in Options > Controls

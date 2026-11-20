@@ -7,16 +7,18 @@ use crate::settings::{self, Setting};
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Category {
     Hud,
+    Inventory,
     Utility,
 }
 
 impl Category {
     /// Every category, in sidebar order.
-    pub const ALL: [Category; 2] = [Category::Hud, Category::Utility];
+    pub const ALL: [Category; 3] = [Category::Hud, Category::Inventory, Category::Utility];
 
     pub fn label(self) -> &'static str {
         match self {
             Category::Hud => "HUD",
+            Category::Inventory => "Inventory",
             Category::Utility => "Utility",
         }
     }
@@ -36,6 +38,8 @@ pub enum Id {
     ToggleSprint,
     ToggleSneak,
     Zoom,
+    ShulkerPreview,
+    EnderPreview,
 }
 
 impl Id {
@@ -53,6 +57,8 @@ impl Id {
             Id::ToggleSprint => "toggle_sprint",
             Id::ToggleSneak => "toggle_sneak",
             Id::Zoom => "zoom",
+            Id::ShulkerPreview => "shulker_preview",
+            Id::EnderPreview => "ender_preview",
         }
     }
 }
@@ -391,6 +397,34 @@ pub fn defaults() -> Vec<Module> {
                 "background",
                 off,
             ),
+        ),
+        Module::new(
+            Id::ShulkerPreview,
+            "Shulker Preview",
+            "Shows what a shulker box holds in its tooltip, as a grid of slots.",
+            Inventory,
+            0xFF976997,
+            true,
+            None,
+            vec![
+                Setting::choice("show", "Show", 0, &["Always", "Hold Shift"]),
+                Setting::toggle("tint", "Tint with the box's colour", true),
+                Setting::toggle("hint", "Say to hold Shift", true),
+            ],
+        ),
+        Module::new(
+            Id::EnderPreview,
+            "Ender Chest Preview",
+            "Shows your ender chest in an ender chest's tooltip, as it was when you last opened one.",
+            Inventory,
+            0xFF1E8C7E,
+            true,
+            None,
+            vec![
+                Setting::choice("show", "Show", 0, &["Always", "Hold Shift"]),
+                Setting::toggle("seen", "Say when it was last seen", true),
+                Setting::toggle("hint", "Say to hold Shift", true),
+            ],
         ),
         Module::new(
             Id::Zoom,

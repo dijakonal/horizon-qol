@@ -159,6 +159,32 @@ pub fn bitmap(icon: Icon) -> &'static [&'static str] {
             "....#.#....",
             ".....#.....",
         ],
+        // A shulker box: a lid over a body, the shell's gap between.
+        Icon::Module(Id::ShulkerPreview) => &[
+            ".##########.",
+            "############",
+            "############",
+            "#####..#####",
+            "++++++++++++",
+            "############",
+            "#####..#####",
+            "############",
+            "############",
+            ".##########.",
+        ],
+        // An ender chest: a chest with its eye on the lock.
+        Icon::Module(Id::EnderPreview) => &[
+            "############",
+            "#++++++++++#",
+            "#++++++++++#",
+            "############",
+            "#####..#####",
+            "#####..#####",
+            "#++++++++++#",
+            "#++++++++++#",
+            "#++++++++++#",
+            "############",
+        ],
         // A magnifying glass.
         Icon::Module(Id::Zoom) => &[
             "..####......",
