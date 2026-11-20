@@ -7,6 +7,7 @@
 //! click is matched against what the player saw.
 
 use crate::hud::{self, HudData};
+use crate::icons::{self, Icon};
 use crate::modules::{Category, Module, Place};
 use crate::settings::{PALETTE, Setting};
 use mod_api::client::hud_layout::PoseOp;
@@ -88,6 +89,9 @@ enum Target {
     ResetLayout,
     /// The HUD element of module `index`, in the editor.
     Element(usize),
+    /// Corner `corner` of module `module`'s element: 0 top left, 1 top right, 2 bottom left,
+    /// 3 bottom right.
+    Handle { module: usize, corner: u8 },
 }
 
 /// What the screen shows.
@@ -115,6 +119,14 @@ enum Drag {
     },
     /// A HUD element, held `grab` pixels from its top left.
     Element { module: usize, grab: [f32; 2] },
+    /// A HUD element's corner, resizing it about the opposite corner `anchor`; `unscaled` is
+    /// its size at scale 1.
+    Resize {
+        module: usize,
+        corner: u8,
+        anchor: [f32; 2],
+        unscaled: [f32; 2],
+    },
 }
 
 /// The open screen's state, kept while it is open and dropped when it closes.
@@ -343,18 +355,30 @@ impl Paint<'_> {
         self.rounded([knob_x, r[1] + 1.0, 8.0, 8.0], theme::TEXT);
     }
 
-    /// A module's icon tile: its colour with its glyph.
+    /// `icon` centred in `r`, with a one-pixel shadow under it.
+    fn glyph(&mut self, icon: Icon, r: [f32; 4], argb: u32) {
+        let k = self.k;
+        let draw = &mut *self.draw;
+        let shadow = [r[0] + 1.0, r[1] + 1.0, r[2], r[3]];
+        icons::draw_in(icon, shadow, 0x50000000, &mut |q, c| {
+            draw.fill(q, fade(c, k))
+        });
+        icons::draw_in(icon, r, argb, &mut |q, c| draw.fill(q, fade(c, k)));
+    }
+
+    /// `icon` at `px` GUI pixels a bitmap pixel, its top left at `at`.
+    fn glyph_at(&mut self, icon: Icon, at: [f32; 2], px: f32, argb: u32) {
+        let k = self.k;
+        let draw = &mut *self.draw;
+        icons::draw(icon, at, px, argb, &mut |q, c| draw.fill(q, fade(c, k)));
+    }
+
+    /// A module's icon tile: a rounded square in its colour, lit at the top, with its icon.
     fn icon(&mut self, r: [f32; 4], m: &Module) {
-        self.rounded(r, fade(m.colour, 0.9));
-        self.fill([r[0] + 2.0, r[1] + r[3] - 3.0, r[2] - 4.0, 1.0], 0x30000000);
-        let glyph = self.fit(m.glyph, r[2] - 2.0);
-        self.text_centred(
-            &glyph,
-            r[0],
-            r[2],
-            r[1] + ((r[3] - LINE) / 2.0).floor() + 1.0,
-            theme::TEXT,
-        );
+        self.rounded(r, m.colour);
+        self.fill([r[0] + 2.0, r[1] + 1.0, r[2] - 4.0, 1.0], 0x40FFFFFF);
+        self.fill([r[0] + 2.0, r[1] + r[3] - 2.0, r[2] - 4.0, 1.0], 0x40000000);
+        self.glyph(Icon::Module(m.id), r, theme::TEXT);
     }
 }
 
@@ -450,6 +474,35 @@ impl Gui {
             p.fill([0.0, y.round(), sw, 1.0], theme::GUIDE);
         }
 
+        // The middle: under the elements, so they stay reachable, and out of the way while one
+        // is dragged or resized.
+        if editing && self.drag.is_none() {
+            let cx = sw / 2.0;
+            let cy = sh / 2.0;
+            let title = "HORIZON QOL";
+            // The logo, 24 wide at 2 pixels a bitmap pixel, then a gap, then the title.
+            let tw = p.width(title) * 2.0;
+            let total = 24.0 + 6.0 + tw;
+            let left = (cx - total / 2.0).floor();
+            p.glyph_at(Icon::Logo, [left + 1.0, cy - 34.0 + 1.0], 2.0, 0x80000000);
+            p.glyph_at(Icon::Logo, [left, cy - 34.0], 2.0, theme::ACCENT);
+            let tx = left + 30.0;
+            p.text_scaled(title, [tx + 1.0, cy - 34.0 + 1.0], 2.0, 0x80000000);
+            p.text_scaled(title, [tx, cy - 34.0], 2.0, theme::TEXT);
+            let mods = [cx - 45.0, cy - 10.0, 90.0, 22.0];
+            p.button(mods, "MODS", hover(Target::OpenMenu), true);
+            self.hit(mods, Target::OpenMenu);
+            let reset = [cx - 45.0, cy + 16.0, 90.0, 14.0];
+            p.button(reset, "Reset layout", hover(Target::ResetLayout), false);
+            self.hit(reset, Target::ResetLayout);
+            let hint = "Drag to move  -  Drag a corner to resize  -  Right-click for settings";
+            let hint = p.fit(hint, sw - 8.0);
+            let hw = p.width(&hint) + 10.0;
+            let hint_r = [((sw - hw) / 2.0).floor(), cy + 36.0, hw, 13.0];
+            p.rounded(hint_r, 0x90000000);
+            p.text_centred(&hint, hint_r[0], hint_r[2], hint_r[1] + 3.0, 0xE0FFFFFF);
+        }
+
         // The elements, each with its frame.
         let sample = data.clone().with_samples();
         self.elements.clear();
@@ -468,13 +521,23 @@ impl Gui {
                 continue;
             }
             hud::draw(p.draw, m, &content, [r[0], r[1]], scale);
-            let dragging = matches!(self.drag, Some(Drag::Element { module, .. }) if module == i);
+            let dragging = matches!(
+                self.drag,
+                Some(Drag::Element { module, .. } | Drag::Resize { module, .. }) if module == i
+            );
             let frame = [r[0] - 2.0, r[1] - 2.0, r[2] + 4.0, r[3] + 4.0];
-            if dragging || hover(Target::Element(i)) {
+            let corners = [
+                [frame[0], frame[1]],
+                [frame[0] + frame[2], frame[1]],
+                [frame[0], frame[1] + frame[3]],
+                [frame[0] + frame[2], frame[1] + frame[3]],
+            ];
+            let on_handle = (0..4u8).any(|corner| hover(Target::Handle { module: i, corner }));
+            if dragging || on_handle || hover(Target::Element(i)) {
                 p.fill(frame, 0x204F8CFF);
                 p.outline(frame, theme::ACCENT);
                 // Its name and scale above it, or below when there is no room.
-                let tag = format!("{}  {:.1}x", m.name, scale);
+                let tag = format!("{}  {:.2}x", m.name, scale);
                 let tw = p.width(&tag) + 6.0;
                 let ty = if frame[1] >= 13.0 {
                     frame[1] - 12.0
@@ -484,39 +547,42 @@ impl Gui {
                 let tag_r = [frame[0], ty, tw, 11.0];
                 p.fill(tag_r, theme::ACCENT);
                 p.text(&tag, [tag_r[0] + 3.0, tag_r[1] + 2.0], theme::TEXT);
+                // The corner handles, which resize it.
+                for (corner, c) in corners.iter().enumerate() {
+                    let lit = hover(Target::Handle {
+                        module: i,
+                        corner: corner as u8,
+                    });
+                    let h = [c[0] - 3.0, c[1] - 3.0, 6.0, 6.0];
+                    p.fill(h, theme::ACCENT);
+                    p.fill(
+                        [h[0] + 1.0, h[1] + 1.0, 4.0, 4.0],
+                        if lit {
+                            theme::ACCENT_HOVER
+                        } else {
+                            theme::TEXT
+                        },
+                    );
+                }
             } else {
                 p.dashed(frame, 0x70FFFFFF);
             }
             self.hit(frame, Target::Element(i));
+            // Handles take the corners whether drawn or not, so the pointer finds them.
+            for (corner, c) in corners.iter().enumerate() {
+                self.hit(
+                    [c[0] - 4.0, c[1] - 4.0, 8.0, 8.0],
+                    Target::Handle {
+                        module: i,
+                        corner: corner as u8,
+                    },
+                );
+            }
         }
         if !editing {
             return;
         }
 
-        // The middle: the name, the Mods button and what to do.
-        let cx = sw / 2.0;
-        let cy = sh / 2.0;
-        let title = "HORIZON QOL";
-        let tw = p.width(title) * 2.0;
-        p.text_scaled(
-            title,
-            [cx - tw / 2.0 + 1.0, cy - 34.0 + 1.0],
-            2.0,
-            0x80000000,
-        );
-        p.text_scaled(title, [cx - tw / 2.0, cy - 34.0], 2.0, theme::TEXT);
-        let mods = [cx - 45.0, cy - 10.0, 90.0, 22.0];
-        p.button(mods, "MODS", hover(Target::OpenMenu), true);
-        self.hit(mods, Target::OpenMenu);
-        let reset = [cx - 45.0, cy + 16.0, 90.0, 14.0];
-        p.button(reset, "Reset layout", hover(Target::ResetLayout), false);
-        self.hit(reset, Target::ResetLayout);
-        let hint = "Drag to move  -  Scroll to resize  -  Right-click for settings";
-        let hint = p.fit(hint, sw - 8.0);
-        let hw = p.width(&hint) + 10.0;
-        let hint_r = [((sw - hw) / 2.0).floor(), cy + 36.0, hw, 13.0];
-        p.rounded(hint_r, 0x90000000);
-        p.text_centred(&hint, hint_r[0], hint_r[2], hint_r[1] + 3.0, 0xE0FFFFFF);
         let _ = mouse;
     }
 
@@ -547,13 +613,17 @@ impl Gui {
             theme::HEADER,
         );
         p.fill([px, py + HEADER_H, pw, 1.0], theme::BORDER);
-        let logo = [px + 8.0, py + 7.0, 14.0, 14.0];
+        let logo = [px + 7.0, py + 5.0, 18.0, 18.0];
         p.rounded(logo, theme::ACCENT);
-        p.text_centred("H", logo[0], logo[2], logo[1] + 3.0, theme::TEXT);
+        p.fill(
+            [logo[0] + 2.0, logo[1] + 1.0, logo[2] - 4.0, 1.0],
+            0x40FFFFFF,
+        );
+        p.glyph(Icon::Logo, logo, theme::TEXT);
         let title_y = py + (HEADER_H - LINE) / 2.0 + 1.0;
-        p.text("HORIZON", [px + 28.0, title_y], theme::TEXT);
+        p.text("HORIZON", [px + 31.0, title_y], theme::TEXT);
         let tw = p.width("HORIZON");
-        p.text("QOL", [px + 32.0 + tw, title_y], theme::ACCENT);
+        p.text("QOL", [px + 35.0 + tw, title_y], theme::ACCENT);
 
         let search_w = 120.0_f32.min(pw - 140.0).max(40.0);
         let search = [
@@ -574,16 +644,24 @@ impl Gui {
         );
         let sy = search[1] + (search[3] - LINE) / 2.0 + 1.0;
         let caret = (self.opened.elapsed().as_millis() / 500).is_multiple_of(2);
+        let glass = if self.search.is_empty() {
+            theme::TEXT_FAINT
+        } else {
+            theme::TEXT_DIM
+        };
+        p.glyph_at(
+            Icon::Search,
+            [search[0] + 5.0, search[1] + (search[3] - 7.0) / 2.0],
+            1.0,
+            glass,
+        );
+        let text_x = search[0] + 16.0;
         if self.search.is_empty() {
-            p.text(
-                "Search modules...",
-                [search[0] + 6.0, sy],
-                theme::TEXT_FAINT,
-            );
+            p.text("Search...", [text_x, sy], theme::TEXT_FAINT);
         } else {
             let shown = format!("{}{}", self.search, if caret { "_" } else { "" });
-            let shown = p.fit(&shown, search[2] - 18.0);
-            p.text(&shown, [search[0] + 6.0, sy], theme::TEXT);
+            let shown = p.fit(&shown, search[2] - 28.0);
+            p.text(&shown, [text_x, sy], theme::TEXT);
             let x_r = [search[0] + search[2] - 12.0, search[1], 12.0, search[3]];
             let x_col = if hover(Target::ClearSearch) {
                 theme::TEXT
@@ -726,7 +804,7 @@ impl Gui {
                 p.fill([x + 2.0, y, cw - 4.0, 1.0], fade(theme::ON, 0.8));
             }
 
-            p.icon([x + 6.0, y + 6.0, 26.0, 18.0], m);
+            p.icon([x + 6.0, y + 5.0, 22.0, 22.0], m);
             if m.is_hud() {
                 let chip = "HUD";
                 let w = p.width(chip) + 6.0;
@@ -770,12 +848,7 @@ impl Gui {
                     theme::BUTTON
                 },
             );
-            for d in 0..3 {
-                p.fill(
-                    [opts[0] + 4.0 + d as f32 * 2.5, opts[1] + 6.0, 1.5, 1.5],
-                    theme::TEXT,
-                );
-            }
+            p.glyph_at(Icon::Gear, [opts[0] + 4.0, opts[1] + 4.0], 1.0, theme::TEXT);
             self.hit(bar, Target::Toggle(i));
             self.hit(opts, Target::Options(i));
         }
@@ -794,10 +867,12 @@ impl Gui {
         let top = ay - self.scroll.round();
 
         let back = [ax, top, 44.0, 14.0];
-        p.button(back, "< Back", hover(Target::Back), false);
+        p.button(back, "", hover(Target::Back), false);
+        p.glyph_at(Icon::Back, [back[0] + 5.0, back[1] + 4.0], 1.0, theme::TEXT);
+        p.text("Back", [back[0] + 16.0, back[1] + 4.0], theme::TEXT);
         self.hit(back, Target::Back);
 
-        let icon = [ax, top + 22.0, 32.0, 24.0];
+        let icon = [ax, top + 20.0, 28.0, 28.0];
         p.icon(icon, m);
         p.text(m.name, [ax + 40.0, top + 24.0], theme::TEXT);
         p.text(m.category.label(), [ax + 40.0, top + 36.0], theme::TEXT_DIM);
@@ -926,7 +1001,7 @@ impl Gui {
         };
         if button == 1 {
             // Right-click on an element opens its settings.
-            if let Target::Element(i) = target {
+            if let Target::Element(i) | Target::Handle { module: i, .. } = target {
                 self.open_options(i);
                 return true;
             }
@@ -1004,6 +1079,23 @@ impl Gui {
                 }
                 self.dirty = true;
             }
+            Target::Handle { module, corner } => {
+                let Some(&(_, er)) = self.elements.iter().find(|(m, _)| *m == module) else {
+                    return true;
+                };
+                let scale = modules[module].f32("scale").max(0.01);
+                let left = corner == 0 || corner == 2;
+                let top = corner < 2;
+                self.drag = Some(Drag::Resize {
+                    module,
+                    corner,
+                    anchor: [
+                        if left { er[0] + er[2] } else { er[0] },
+                        if top { er[1] + er[3] } else { er[1] },
+                    ],
+                    unscaled: [er[2] / scale, er[3] / scale],
+                });
+            }
             Target::Element(i) => {
                 let Some(&(_, er)) = self.elements.iter().find(|(m, _)| *m == i) else {
                     return true;
@@ -1043,8 +1135,55 @@ impl Gui {
                 self.move_element(module, [at[0] - grab[0], at[1] - grab[1]], modules);
                 true
             }
+            Some(Drag::Resize {
+                module,
+                corner,
+                anchor,
+                unscaled,
+            }) => {
+                self.resize_element(module, corner, anchor, unscaled, at, modules);
+                true
+            }
             None => false,
         }
+    }
+
+    /// Scales element `module` so the dragged corner follows `at`, its opposite corner `anchor`
+    /// staying put: the scale is the larger of the two the pointer asks for, so the element
+    /// keeps its shape, as a picture does when its corner is dragged.
+    fn resize_element(
+        &mut self,
+        module: usize,
+        corner: u8,
+        anchor: [f32; 2],
+        unscaled: [f32; 2],
+        at: [f32; 2],
+        modules: &mut [Module],
+    ) {
+        let want = ((at[0] - anchor[0]).abs() / unscaled[0].max(1.0))
+            .max((at[1] - anchor[1]).abs() / unscaled[1].max(1.0));
+        let m = &mut modules[module];
+        let Some(setting) = m.settings.iter_mut().find(|s| s.key() == "scale") else {
+            return;
+        };
+        setting.set_slider(want);
+        let scale = m.f32("scale");
+        let [sw, sh] = self.screen;
+        let (w, h) = (unscaled[0] * scale, unscaled[1] * scale);
+        let left = corner == 0 || corner == 2;
+        let top = corner < 2;
+        let x = if left { anchor[0] - w } else { anchor[0] };
+        let y = if top { anchor[1] - h } else { anchor[1] };
+        let x = x.clamp(hud::MARGIN, (sw - w - hud::MARGIN).max(hud::MARGIN));
+        let y = y.clamp(hud::MARGIN, (sh - h - hud::MARGIN).max(hud::MARGIN));
+        m.place = Some(Place {
+            x: x / sw.max(1.0),
+            y: y / sh.max(1.0),
+        });
+        if let Some(e) = self.elements.iter_mut().find(|(i, _)| *i == module) {
+            e.1 = [x, y, w, h];
+        }
+        self.dirty = true;
     }
 
     /// Puts element `module`'s top left near `to`, snapped to the screen's edges and middle and
@@ -1133,7 +1272,9 @@ impl Gui {
                 true
             }
             View::Editor => {
-                let Some((_, _, Target::Element(i))) = self.target_at(at) else {
+                let Some((_, _, Target::Element(i) | Target::Handle { module: i, .. })) =
+                    self.target_at(at)
+                else {
                     return false;
                 };
                 if let Some(s) = modules[i].settings.iter_mut().find(|s| s.key() == "scale")

@@ -8,14 +8,17 @@ Minecraft: Java Edition 26.3, with a client-style mod menu and a HUD editor.
 ## Using it
 
 - **Right Shift** opens the HUD editor. Drag an element to move it (it snaps to the screen's
-  edges and middle and to other elements, with a blue guide line), scroll over it to resize it,
-  and right-click it for its settings. **Reset layout** puts every element back.
+  edges and middle and to other elements, with a blue guide line). Drag one of its corner
+  handles to resize it, like a window: the opposite corner stays put. Scrolling over it resizes
+  it too. Right-click it for its settings. **Reset layout** puts every element back.
 - **Mods** in the middle opens the mod menu: switch modules on and off, search them, and press
   `...` on a card for its settings. **Edit HUD** goes back to the editor.
 - Right Shift or Esc closes it. Both keys the mod uses (**Open Mod Menu** and **Zoom**) are in
   *Options > Controls* under Horizon QoL, where you can rebind them.
 - Settings are saved when you close the screen, in `config/horizon_qol/settings.txt` in the game
   folder.
+
+![Resizing an element by its corner](docs/resize.png)
 
 ![The mod menu](docs/menu.png)
 

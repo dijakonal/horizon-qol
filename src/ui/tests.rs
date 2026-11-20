@@ -329,7 +329,7 @@ fn options_switches_sliders_and_swatches_change_settings() {
         })
         .unwrap();
     assert!(g.mouse_pressed([r[0] + r[2] - 4.0, r[1] + 5.0], 0, &mut mods));
-    assert!((mods[fps].f32("scale") - 2.5).abs() < 1e-4);
+    assert!((mods[fps].f32("scale") - 3.0).abs() < 1e-4);
     assert!(g.mouse_dragged([r[0] - 50.0, r[1] + 5.0], &mut mods));
     assert!((mods[fps].f32("scale") - 0.5).abs() < 1e-4);
     assert!(g.mouse_released());
@@ -445,4 +445,63 @@ fn the_hud_preview() {
     assert!(r.texts.iter().any(|(t, _)| t == "144 FPS"));
     assert!(r.texts.iter().any(|(t, _)| t == "X: -313"));
     r.write("hud");
+}
+
+#[test]
+fn dragging_a_corner_resizes_about_the_opposite_corner() {
+    let mut mods = modules::defaults();
+    let co = mods.iter().position(|m| m.id == Id::Coordinates).unwrap();
+    mods[co].place = Some(Place { x: 0.05, y: 0.25 });
+    let mut g = gui(View::Editor);
+    frame(&mut g, SIZE, [0.0, 0.0], &mods, "resize-before");
+    let (_, r) = *g.elements.iter().find(|(m, _)| *m == co).unwrap();
+
+    // The bottom-right handle, dragged out to twice the size: the top left stays put.
+    let br = centre_of(
+        &g,
+        Target::Handle {
+            module: co,
+            corner: 3,
+        },
+    );
+    assert!(g.mouse_pressed(br, 0, &mut mods));
+    assert!(g.mouse_dragged([r[0] + r[2] * 2.0, r[1] + r[3] * 2.0], &mut mods));
+    assert!((mods[co].f32("scale") - 2.0).abs() < 1e-4);
+    let place = mods[co].place.unwrap();
+    assert!((place.x * SIZE[0] - r[0]).abs() < 0.01 && (place.y * SIZE[1] - r[1]).abs() < 0.01);
+    frame(
+        &mut g,
+        SIZE,
+        [r[0] + r[2] * 2.0, r[1] + r[3] * 2.0],
+        &mods,
+        "resize-drag",
+    );
+    assert!(g.mouse_released());
+
+    // The top-left handle, dragged in to half the original size: the bottom right stays put.
+    frame(&mut g, SIZE, [0.0, 0.0], &mods, "resize-after");
+    let (_, big) = *g.elements.iter().find(|(m, _)| *m == co).unwrap();
+    let bottom_right = [big[0] + big[2], big[1] + big[3]];
+    let tl = centre_of(
+        &g,
+        Target::Handle {
+            module: co,
+            corner: 0,
+        },
+    );
+    assert!(g.mouse_pressed(tl, 0, &mut mods));
+    let (uw, uh) = (big[2] / 2.0, big[3] / 2.0);
+    assert!(g.mouse_dragged(
+        [bottom_right[0] - uw * 0.5, bottom_right[1] - uh * 0.5],
+        &mut mods
+    ));
+    assert!((mods[co].f32("scale") - 0.5).abs() < 1e-4);
+    let (_, small) = *g.elements.iter().find(|(m, _)| *m == co).unwrap();
+    assert!((small[0] + small[2] - bottom_right[0]).abs() < 0.5);
+    assert!((small[1] + small[3] - bottom_right[1]).abs() < 0.5);
+
+    // It never grows past the slider's end.
+    assert!(g.mouse_dragged([-1000.0, -1000.0], &mut mods));
+    assert!((mods[co].f32("scale") - 3.0).abs() < 1e-4);
+    assert!(g.mouse_released());
 }

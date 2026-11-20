@@ -7,6 +7,7 @@
 //! are saved in `config/horizon_qol/settings.txt`.
 
 mod hud;
+mod icons;
 mod modules;
 mod settings;
 mod ui;

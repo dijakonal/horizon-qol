@@ -72,8 +72,6 @@ pub struct Module {
     pub default_enabled: bool,
     /// The colour of its icon tile.
     pub colour: u32,
-    /// A short glyph for its icon tile.
-    pub glyph: &'static str,
     pub settings: Vec<Setting>,
     /// Where its HUD element is, for a module that draws on the HUD.
     pub place: Option<Place>,
@@ -83,7 +81,7 @@ pub struct Module {
 /// The settings every HUD element has.
 fn hud_settings(extra: Vec<Setting>) -> Vec<Setting> {
     let mut s = vec![
-        Setting::slider("scale", "Scale", 1.0, [0.5, 2.5, 0.1], "{}x"),
+        Setting::slider("scale", "Scale", 1.0, [0.5, 3.0, 0.05], "{}x"),
         Setting::colour("text_colour", "Text colour", 0xFFFFFFFF),
         Setting::toggle("text_shadow", "Text shadow", true),
         Setting::toggle("background", "Background", true),
@@ -107,7 +105,6 @@ impl Module {
         description: &'static str,
         category: Category,
         colour: u32,
-        glyph: &'static str,
         enabled: bool,
         place: Option<[f32; 2]>,
         settings: Vec<Setting>,
@@ -121,7 +118,6 @@ impl Module {
             enabled,
             default_enabled: enabled,
             colour,
-            glyph,
             settings,
             place,
             default_place: place,
@@ -170,7 +166,6 @@ pub fn defaults() -> Vec<Module> {
             "Shows your frames per second.",
             Hud,
             0xFF3B82F6,
-            "FPS",
             true,
             Some([0.0, 0.0]),
             hud(vec![Setting::toggle("label", "Show label", true)]),
@@ -181,7 +176,6 @@ pub fn defaults() -> Vec<Module> {
             "Shows your clicks per second.",
             Hud,
             0xFF6366F1,
-            "CPS",
             false,
             Some([0.0, 0.07]),
             hud(vec![
@@ -195,7 +189,6 @@ pub fn defaults() -> Vec<Module> {
             "Shows your movement keys and mouse buttons as you press them.",
             Hud,
             0xFF0EA5E9,
-            "WASD",
             false,
             Some([0.0, 1.0]),
             {
@@ -227,7 +220,6 @@ pub fn defaults() -> Vec<Module> {
             "Shows your position, the way you face and the dimension.",
             Hud,
             0xFF14B8A6,
-            "XYZ",
             true,
             Some([0.0, 0.14]),
             hud(vec![
@@ -242,7 +234,6 @@ pub fn defaults() -> Vec<Module> {
             "Shows how fast you move, in blocks per second.",
             Hud,
             0xFF10B981,
-            "SPD",
             false,
             Some([0.0, 0.34]),
             hud(vec![Setting::toggle(
@@ -257,7 +248,6 @@ pub fn defaults() -> Vec<Module> {
             "Shows your armor and held item with their durability.",
             Hud,
             0xFFF59E0B,
-            "ARM",
             false,
             Some([1.0, 1.0]),
             {
@@ -288,7 +278,6 @@ pub fn defaults() -> Vec<Module> {
             "Lists your active effects with their time left.",
             Hud,
             0xFFEC4899,
-            "FX",
             false,
             Some([1.0, 0.08]),
             hud(vec![Setting::toggle("level", "Show level", true)]),
@@ -299,7 +288,6 @@ pub fn defaults() -> Vec<Module> {
             "Shows the real-world time.",
             Hud,
             0xFF8B5CF6,
-            "TIME",
             false,
             Some([1.0, 0.0]),
             hud(vec![
@@ -320,7 +308,6 @@ pub fn defaults() -> Vec<Module> {
             "Sprints for you whenever you walk forward.",
             Utility,
             0xFFEF4444,
-            "RUN",
             false,
             None,
             vec![],
@@ -331,7 +318,6 @@ pub fn defaults() -> Vec<Module> {
             "Hold C (set it in Controls) to zoom in. Scroll while zooming to zoom more or less.",
             Utility,
             0xFFF97316,
-            "ZM",
             true,
             None,
             vec![
