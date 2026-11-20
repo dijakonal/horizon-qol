@@ -8,10 +8,11 @@ mod modules;
 mod ui;
 
 use mod_api::{
-    self, ClientHost, ClientTickPreEvent, Flow, Hooks, KeyConflictContext, KeyRegistration,
-    Registrar, RegistrationContext, ScreenCharTypedPreEvent, ScreenClosingEvent,
-    ScreenKeyPressedPreEvent, ScreenMouseButtonPressedPreEvent, ScreenMouseScrolledPreEvent,
-    ScreenRenderPostEvent, ScreenTransparentBackgroundEvent,
+    self, ClientHost, ClientPlayerLoggingInEvent, ClientTickPreEvent, Flow, Hooks, InputKeyEvent,
+    KeyAction, KeyConflictContext, KeyRegistration, Registrar, RegistrationContext,
+    ScreenCharTypedPreEvent, ScreenClosingEvent, ScreenKeyPressedPreEvent,
+    ScreenMouseButtonPressedPreEvent, ScreenMouseScrolledPreEvent, ScreenRenderPostEvent,
+    ScreenTransparentBackgroundEvent, Text,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
@@ -36,6 +37,8 @@ struct HorizonQol {
     /// The menu's key was pressed with the menu open: the next client tick closes it (the screen
     /// input hooks' host only reads).
     close: AtomicBool,
+    /// The player joined a world: the next client tick says in chat that the mod is loaded.
+    greet: AtomicBool,
 }
 
 impl HorizonQol {
@@ -46,6 +49,18 @@ impl HorizonQol {
             menu: None,
         });
         guard
+    }
+
+    /// Opens the menu over the world, with a fresh layout. False when it could not open (another
+    /// screen is up, or no world).
+    fn open(&self, host: &mut dyn ClientHost) -> bool {
+        if host.mod_screen().is_some() || !host.mod_screen_open(ID) {
+            return false;
+        }
+        if let Some(state) = self.state().as_mut() {
+            state.menu = Some(ui::Menu::default());
+        }
+        true
     }
 
     /// Runs `f` on the open menu, if this mod's screen is the one open.
@@ -102,7 +117,6 @@ impl Hooks for HorizonQol {
         r.register_key_mapping(
             KeyRegistration::new(OPEN_MENU, DEFAULT_KEY)
                 .label("key.horizon_qol.open_menu")
-                .category("key.categories.horizon_qol")
                 .context(KeyConflictContext::InGame),
         );
     }
@@ -111,22 +125,42 @@ impl Hooks for HorizonQol {
         if self.close.swap(false, Ordering::Relaxed) {
             host.mod_screen_close(ID);
         }
-        // Clicks only count with no screen open, so this is a press over the world.
-        let mut open = false;
+        // The Controls mapping's presses. `input_key` normally opened the menu at the press
+        // already, and opening a screen drops the mapping's pending clicks, so this only acts
+        // when that did not happen (a press from the control socket, a mouse button binding).
+        let mut pressed = false;
         while host.consume_click(ID, OPEN_MENU) {
-            open = true;
+            pressed = true;
         }
-        if open && host.mod_screen().is_none() && host.mod_screen_open(ID)
-            && let Some(state) = self.state().as_mut() {
-                state.menu = Some(ui::Menu::default());
-            }
+        if pressed {
+            self.open(host);
+        }
+        if self.greet.load(Ordering::Relaxed) && host.playing() {
+            self.greet.store(false, Ordering::Relaxed);
+            let key = key_label(&bound_key(host));
+            let line = format!("[Horizon QoL] Loaded. Press {key} to open the menu.");
+            let _ = host.chat_line(Text::literal(line));
+        }
+    }
+
+    /// A key press over the world: the menu's key opens it, as the key's press, whatever the
+    /// Controls mapping's own bookkeeping does.
+    fn input_key(&self, host: &mut dyn ClientHost, event: &mut InputKeyEvent<'_>) {
+        if event.action == KeyAction::Press && host.playing() && event.key == bound_key(host) {
+            self.open(host);
+        }
+    }
+
+    fn client_player_logging_in(&self, _: &mut dyn ClientHost, _: &mut ClientPlayerLoggingInEvent) {
+        self.greet.store(true, Ordering::Relaxed);
     }
 
     fn screen_closing(&self, host: &dyn ClientHost, _: &mut ScreenClosingEvent<'_>) {
         if host.mod_screen() == Some(ID)
-            && let Some(state) = self.state().as_mut() {
-                state.menu = None;
-            }
+            && let Some(state) = self.state().as_mut()
+        {
+            state.menu = None;
+        }
     }
 
     fn screen_transparent_background(

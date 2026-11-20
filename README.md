@@ -12,8 +12,9 @@ game yet.
 
 ## What it does
 
-- **Right Shift** opens the mod menu over the world. Right Shift or Esc closes it. The key can be
-  changed under *Options > Controls > Horizon QoL*.
+- **Right Shift** opens the mod menu over the world. Right Shift or Esc closes it. The key is
+  listed under *Options > Controls*, in the Horizon QoL section as **Open Mod Menu**, where you can
+  rebind it.
 - The menu has a sidebar of categories (All, HUD, PvP, Utility, Visual), a grid of module cards
   with an ENABLED / DISABLED bar, and a search box: start typing to filter, Backspace to delete,
   click the `x` to clear.
@@ -26,34 +27,57 @@ Module on/off states are kept in memory, so they reset when the game restarts.
 
 ## Building and installing
 
-This is a native Horizon mod. You need the Horizon launcher (`horizon-launcher`) with an instance,
-and the mod tool:
+This is a native Horizon mod: the launcher compiles it for your instance. You need the Horizon
+launcher and the mod tool:
 
 ```sh
 cargo install --locked --git https://github.com/horizon-rust/horizon cargo-horizon-mod
 ```
 
-Then, from this folder:
+### From this folder (works for a private repo)
 
-```sh
-cargo horizon-mod update            # fetches the SDK into .horizon/sdk/ (and moves the pin to the newest Nightly)
-horizon-launcher native-build . --instance "My Instance" --trust-native-code
-```
+1. Pack the mod. This fetches the pinned SDK into `.horizon/sdk/` the first time:
 
-Start the instance, join a world and press Right Shift.
+   ```sh
+   cargo horizon-mod build
+   ```
+
+   It writes `target/horizon-mod/horizon_qol.hmod`.
+2. In the launcher, open **Mods**, then **Open folder**: that is the instance's game folder (the one
+   with `options.txt`). Copy `horizon_qol.hmod` into its `horizon-native-mods/` folder (make it if
+   it isn't there).
+3. Turn the mod on: in the same game folder, add this line to `horizon-mods.txt` (make the file if
+   it isn't there), or flip its switch on the Mods page:
+
+   ```text
+   mod.horizon_qol:true
+   ```
+4. Press **Build** on the Mods page (or **Play**), then join a world.
+
+When the mod has loaded, chat says **"[Horizon QoL] Loaded. Press Right Shift to open the menu."**
+when you join a world. No line means the launcher didn't build it: check step 3 and the build log
+(`native/build.log`).
+
+After a change, run `cargo horizon-mod build` again, copy the new `.hmod` over the old one, and build.
+
+### From GitHub (public repo only)
+
+On the launcher's **Mods** page, **Add from GitHub** with `https://github.com/dijakonal/horizon-qol`.
+
+### The pin
 
 `horizon-mod.toml` pins the Nightly of 2026-11-20 (`0a875da`). The launcher builds the mod against
-that exact game build, so run `cargo horizon-mod update` to move to a newer one.
+that exact game build. `cargo horizon-mod update` moves the pin to the newest Nightly.
 
 ## Layout
 
 ```text
 horizon-mod.toml          the manifest: id, side, and the pinned Horizon build
 Cargo.toml                depends only on horizon-mod-api from the pinned SDK
-src/lib.rs                the hooks: the key mapping, opening and closing the screen, routing input
+src/lib.rs                the hooks: the Controls key mapping, opening and closing the screen, routing input, the loaded line in chat
 src/ui.rs                 the menu: layout, drawing, clicks, scroll and search
 src/modules.rs            the placeholder module list and categories
-assets/horizon_qol/lang/  names for the key mapping in Options > Controls
+assets/horizon_qol/lang/  the key mapping's name in Options > Controls
 ```
 
 ## Tests
