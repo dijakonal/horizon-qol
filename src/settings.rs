@@ -6,9 +6,10 @@
 //! and fixed by hand.
 
 /// The colours a colour setting can take, as opaque ARGB: the swatches the options page shows.
-pub const PALETTE: [u32; 16] = [
-    0xFFFFFFFF, 0xFFB4B4BE, 0xFF5C5C68, 0xFF000000, 0xFF4F8CFF, 0xFF38BDF8, 0xFF2DD4BF, 0xFF22C55E,
-    0xFFA3E635, 0xFFFACC15, 0xFFFB923C, 0xFFEF4444, 0xFFEC4899, 0xFFA855F7, 0xFF6366F1, 0xFF8B5A2B,
+pub const PALETTE: [u32; 17] = [
+    0xFFFFFFFF, 0xFFB4B4BE, 0xFF5C5C68, 0xFF26262E, 0xFF000000, 0xFF4F8CFF, 0xFF38BDF8, 0xFF2DD4BF,
+    0xFF22C55E, 0xFFA3E635, 0xFFFACC15, 0xFFFB923C, 0xFFEF4444, 0xFFEC4899, 0xFFA855F7, 0xFF6366F1,
+    0xFF8B5A2B,
 ];
 
 /// One setting of a module.

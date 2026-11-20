@@ -1,5 +1,6 @@
 //! The modules: what each one is, its settings, and where its HUD element sits.
 
+use crate::hud::{keyboard, pad};
 use crate::settings::{self, Setting};
 
 /// A group of modules, one tab of the sidebar.
@@ -253,10 +254,19 @@ pub fn defaults() -> Vec<Module> {
                     Setting::toggle("space", "Show space bar", true),
                     Setting::toggle("cps", "CPS on mouse buttons", true),
                     Setting::heading("Keyboard mode"),
+                    Setting::choice("kb_layout", "Layout", 0, keyboard::LAYOUTS),
+                    Setting::choice("kb_size", "Size", 0, keyboard::SIZES),
                     Setting::toggle("function_row", "Show Esc and F1-F12", true),
                     Setting::heading("Controller mode"),
-                    Setting::choice("pad_style", "Buttons", 0, &["Xbox", "PlayStation"]),
-                    Setting::toggle("pad_body", "Show controller body", true),
+                    Setting::choice("pad_style", "Controller", 0, pad::STYLES),
+                    Setting::colour("pad_colour", "Controller colour", 0xFF26262E),
+                    Setting::slider(
+                        "pad_opacity",
+                        "Controller opacity",
+                        90.0,
+                        [10.0, 100.0, 5.0],
+                        "{}%",
+                    ),
                 ]),
                 "background_opacity",
                 |s| {

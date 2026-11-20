@@ -73,6 +73,8 @@ struct State {
     last_down: HashMap<&'static str, u64>,
     /// The view's yaw and pitch at the last tick, for the controller's right stick.
     last_rotation: Option<[f32; 2]>,
+    /// Works out the keyboard layout from the player's typing, for Keystrokes' Auto layout.
+    layout: hud::keyboard::Detector,
 }
 
 impl State {
@@ -118,6 +120,7 @@ impl HorizonQol {
             zoom: None,
             last_down: HashMap::new(),
             last_rotation: None,
+            layout: hud::keyboard::Detector::default(),
         });
         guard
     }
@@ -331,7 +334,12 @@ fn read_frame(host: &dyn ClientHost, state: &mut State) {
         return;
     }
     let fades = keys.bool("fade");
-    let keyboard = keys.choice("mode") == modules::MODE_KEYBOARD;
+    // The keyboard map's keys, read before the fade bookkeeping borrows the state.
+    let board_keys = if keys.choice("mode") == modules::MODE_KEYBOARD {
+        hud::keyboard_keys(keys, &state.data)
+    } else {
+        Vec::new()
+    };
     let mapping_down = |name: &str| host.mapping(name).ok().flatten().is_some_and(|m| m.down);
     let mut glow = HashMap::new();
     let last_down = &mut state.last_down;
@@ -355,10 +363,8 @@ fn read_frame(host: &dyn ClientHost, state: &mut State) {
     for &name in hud::MAPPINGS {
         light(name, mapping_down(name));
     }
-    if keyboard {
-        for name in hud::keyboard_keys() {
-            light(name, host.is_key_down(name));
-        }
+    for name in board_keys {
+        light(name, host.is_key_down(name));
     }
     let axis =
         |plus: &str, minus: &str| (mapping_down(plus) as i32 - mapping_down(minus) as i32) as f32;
@@ -494,8 +500,14 @@ impl Hooks for HorizonQol {
 
     /// A key press over the world: the menu's key opens the screen.
     fn input_key(&self, host: &mut dyn ClientHost, event: &mut InputKeyEvent<'_>) {
-        if event.action == KeyAction::Press && host.playing() && event.key == bound_key(host) {
-            self.open(host);
+        if event.action == KeyAction::Press {
+            if let Some(state) = self.state().as_mut() {
+                state.layout.press(event.key, event.layout_key);
+                state.data.auto_layout = state.layout.layout();
+            }
+            if host.playing() && event.key == bound_key(host) {
+                self.open(host);
+            }
         }
     }
 

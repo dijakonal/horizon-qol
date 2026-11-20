@@ -61,17 +61,32 @@ FPS, Coordinates and Zoom are on to start with.
 ### Keystrokes modes
 
 - **WASD:** W A S D, both mouse buttons (with CPS) and the space bar.
-- **Keyboard:** a full keyboard map, Esc and F1-F12 optional, that lights every key you press.
-- **Controller:** a gamepad. Buttons light as their actions happen (A jump, X swap hands,
-  Y inventory, LT use, RT attack, stick clicks sprint and sneak, the D-pad's drop, pick and
-  chat). The left stick leans the way you move and the right stick the way you turn. Xbox or
-  PlayStation button symbols. Horizon gives mods no direct read of a pad, so the controller view
-  shows what the game does with your input. That also works for keyboard and mouse players. The
-  bumpers don't light, since hotbar changes aren't visible to a mod.
+- **Keyboard:** a keyboard map that lights every key you press.
+  - **Layout:** Auto, US, UK, QWERTZ (German), AZERTY (French), Dvorak or Colemak. The UK,
+    QWERTZ and AZERTY boards have the ISO shape: the extra key left of Z and the tall Enter.
+    **Auto** works out your layout from what you type: the game reports both the key you pressed
+    and the letter your layout made of it. It starts as US and changes once you've typed a few
+    letters that tell layouts apart, and it switches to UK when you press the ISO key.
+  - **Size:** 60% (the main keys), TKL (adds Insert, Home, Page Up/Down and the arrows) or Full
+    (adds the number pad). Esc and F1-F12 are optional.
+- **Controller:** an Xbox, PlayStation or Switch Pro controller, each with its own shape, button
+  layout and labels (Xbox's coloured A B X Y, PlayStation's ✕ ○ □ △, Switch's B A Y X). The
+  controller's colour and opacity are settings. Buttons light as their actions happen (south
+  jump, west swap hands, north inventory, the triggers use and attack, stick clicks sprint and
+  sneak, the D-pad's drop, pick and chat). The left stick leans the way you move and the right
+  stick the way you turn. Horizon gives mods no direct read of a pad, so the controller shows
+  what the game does with your input. That also works with keyboard and mouse. The bumpers don't
+  light, since hotbar changes aren't visible to a mod.
 
-![Keystrokes as a keyboard](docs/keys-keyboard.png)
+![Keystrokes as a full keyboard](docs/kb-full.png)
 
-![Keystrokes as a controller](docs/keys-controller.png)
+![Keystrokes as a German keyboard](docs/kb-qwertz.png)
+
+![Keystrokes as an Xbox controller](docs/pad-xbox.png)
+
+![Keystrokes as a PlayStation controller](docs/pad-playstation.png)
+
+![Keystrokes as a Switch Pro controller](docs/pad-switch_pro.png)
 
 Notes:
 - Toggle Sprint and Toggle Sneak leave the game's own *Toggle Sprint* and *Toggle Sneak* options
@@ -137,6 +152,8 @@ src/modules.rs            the modules, their settings and default places; the co
 src/settings.rs           switches, sliders, colours, choices, keybind rows and headings; reading and writing them
 src/icons.rs              the pixel-art icons, drawn from small bitmaps
 src/hud.rs                what each HUD element shows, its size, and drawing it scaled; Keystrokes' three modes
+src/hud/keyboard.rs       the keyboard layouts and sizes, and Auto's layout detection
+src/hud/pad.rs            the controllers, drawn and shaded from circles and rounded rectangles
 src/ui.rs                 the screen: the HUD editor and the mod menu
 src/ui/tests.rs           the screen's tests, with a fake draw context that can write SVG previews
 assets/horizon_qol/lang/  the key mappings' names in Options > Controls

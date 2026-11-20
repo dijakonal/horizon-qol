@@ -528,7 +528,7 @@ fn options_until(
     let i = mods.iter().position(|m| m.id == id).unwrap();
     g.open_options(i);
     g.opened = Instant::now() - Duration::from_secs(1);
-    for _ in 0..30 {
+    for _ in 0..80 {
         frame(g, SIZE, [0.0, 0.0], mods, name);
         // Found, and not cut by the bottom of the scrolling area.
         if let Some((_, t)) = g.hits.iter().find(|(r, t)| find(t) && r[3] >= 9.0) {
@@ -621,4 +621,108 @@ fn keystrokes_previews_in_every_mode() {
     }
     // The keyboard map is wider than WASD; the controller sits between.
     assert!(sizes[1][0] > sizes[2][0] && sizes[2][0] > sizes[0][0]);
+}
+
+/// Draws Keystrokes alone with `setup` applied to its settings, and writes it as `name`.
+fn keystrokes(name: &str, setup: &[(&str, &str)]) -> (Recorder, [f32; 2]) {
+    let mut mods = modules::defaults();
+    let ks = mods.iter().position(|m| m.id == Id::Keystrokes).unwrap();
+    for (key, value) in setup {
+        mods[ks]
+            .settings
+            .iter_mut()
+            .find(|s| s.key() == *key)
+            .unwrap_or_else(|| panic!("no setting {key}"))
+            .read(value);
+    }
+    let d = data();
+    let m = &mods[ks];
+    let mut r = Recorder::new([420.0, 160.0]);
+    let content = crate::hud::content(m, &d).unwrap();
+    let size = crate::hud::measure(m, &content, &|s| r.text_width(s));
+    crate::hud::draw(&mut r, m, &content, [8.0, 8.0], 1.0, &d);
+    r.write(name);
+    (r, size)
+}
+
+#[test]
+fn every_keyboard_layout_and_size_draws() {
+    let sizes: Vec<f32> = ["60%", "tkl", "full"]
+        .iter()
+        .map(|size| {
+            keystrokes(
+                &format!("kb-{}", size.trim_end_matches('%')),
+                &[("mode", "keyboard"), ("kb_layout", "us"), ("kb_size", size)],
+            )
+            .1[0]
+        })
+        .collect();
+    assert!(sizes[0] < sizes[1] && sizes[1] < sizes[2]);
+    for (layout, expect) in [
+        ("uk", "#"),
+        ("qwertz", "Ü"),
+        ("azerty", "é"),
+        ("dvorak", "O"),
+        ("colemak", "F"),
+    ] {
+        let (r, _) = keystrokes(
+            &format!("kb-{layout}"),
+            &[("mode", "keyboard"), ("kb_layout", layout)],
+        );
+        assert!(
+            r.texts.iter().any(|(t, _)| t == expect),
+            "{layout} shows {expect}"
+        );
+    }
+}
+
+#[test]
+fn every_controller_draws() {
+    for (style, label) in [("xbox", "LT"), ("playstation", "L2"), ("switch_pro", "ZL")] {
+        let (r, _) = keystrokes(
+            &format!("pad-{style}"),
+            &[
+                ("mode", "controller"),
+                ("pad_style", style),
+                ("key_size", "32"),
+            ],
+        );
+        assert!(
+            r.texts.iter().any(|(t, _)| t == label),
+            "{style} shows {label}"
+        );
+    }
+}
+
+#[test]
+fn a_choice_too_wide_for_its_row_steps_through_its_options() {
+    let mut mods = all_on();
+    let ks = mods.iter().position(|m| m.id == Id::Keystrokes).unwrap();
+    let layout = mods[ks]
+        .settings
+        .iter()
+        .position(|s| s.key() == "kb_layout")
+        .unwrap();
+    let mut g = gui(View::Menu);
+    // A small GUI: the seven layouts can't fit side by side.
+    let small = [320.0, 180.0];
+    g.open_options(ks);
+    g.opened = Instant::now() - Duration::from_secs(1);
+    let next = Target::Choice {
+        module: ks,
+        setting: layout,
+        option: 1,
+    };
+    for _ in 0..80 {
+        let mut r = Recorder::new(small);
+        g.draw(&mut r, small, [0.0, 0.0], &mods, &data(), "Right Shift");
+        if g.hits.iter().any(|(r, t)| *t == next && r[3] >= 9.0) {
+            r.write("options-small-choice");
+            break;
+        }
+        let c = [g.content[0] + 4.0, g.content[1] + 4.0];
+        g.scroll(c, -1.0, &mut mods);
+    }
+    assert!(g.mouse_pressed(centre_of(&g, next), 0, &mut mods));
+    assert_eq!(mods[ks].choice("kb_layout"), 1);
 }

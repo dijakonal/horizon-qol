@@ -968,6 +968,23 @@ impl Gui {
                     // A row of buttons, the chosen one lit, right-aligned.
                     let widths: Vec<f32> = options.iter().map(|o| p.width(o) + 10.0).collect();
                     let total: f32 = widths.iter().sum::<f32>() + 2.0 * (options.len() - 1) as f32;
+                    let room = row[2] - 6.0 - (8.0 + p.width(setting.label()) + 12.0);
+                    if total > room {
+                        // Too many to fit: one button, showing the choice, that steps to the next.
+                        let shown = format!("< {} >", options[*value]);
+                        let w = (p.width(&shown) + 12.0).min(room.max(40.0));
+                        let r = [row[0] + row[2] - 6.0 - w, row[1] + 4.0, w, ROW_H - 8.0];
+                        let t = Target::Choice {
+                            module: i,
+                            setting: s,
+                            option: (*value + 1) % options.len(),
+                        };
+                        let shown = p.fit(&shown, w - 4.0);
+                        p.button(r, &shown, hover(t), true);
+                        self.hit(r, t);
+                        y += ROW_H + 3.0;
+                        continue;
+                    }
                     let mut bx = row[0] + row[2] - 6.0 - total;
                     for (k, (option, w)) in options.iter().zip(&widths).enumerate() {
                         let r = [bx, row[1] + 4.0, *w, ROW_H - 8.0];

@@ -18,6 +18,10 @@ pub enum Icon {
     PadCircle,
     PadSquare,
     PadTriangle,
+    ArrowUp,
+    ArrowDown,
+    ArrowLeft,
+    ArrowRight,
 }
 
 /// The bitmap of `icon`, rows top to bottom.
@@ -225,6 +229,36 @@ pub fn bitmap(icon: Icon) -> &'static [&'static str] {
             "#...#", //
             "#####",
         ],
+        Icon::ArrowUp => &[
+            "...#...", //
+            "..###..", //
+            ".#####.", //
+            "#######",
+        ],
+        Icon::ArrowDown => &[
+            "#######", //
+            ".#####.", //
+            "..###..", //
+            "...#...",
+        ],
+        Icon::ArrowLeft => &[
+            "...#", //
+            "..##", //
+            ".###", //
+            "####", //
+            ".###", //
+            "..##", //
+            "...#",
+        ],
+        Icon::ArrowRight => &[
+            "#...", //
+            "##..", //
+            "###.", //
+            "####", //
+            "###.", //
+            "##..", //
+            "#...",
+        ],
         Icon::Back => &[
             "...#...", //
             "..##...", //
@@ -306,6 +340,10 @@ mod tests {
             Icon::PadCircle,
             Icon::PadSquare,
             Icon::PadTriangle,
+            Icon::ArrowUp,
+            Icon::ArrowDown,
+            Icon::ArrowLeft,
+            Icon::ArrowRight,
         ]);
         for icon in icons {
             let rows = bitmap(icon);

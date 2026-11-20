@@ -4,8 +4,12 @@
 //! layout and the text can be checked without a game. An element is drawn in its own unscaled
 //! pixels into a `gui_paint` buffer under one scaling pose, so text and boxes scale together.
 
+pub mod keyboard;
+pub mod pad;
+
 use crate::icons::{self, Icon};
 use crate::modules::{Id, MODE_CONTROLLER, MODE_KEYBOARD, Module, Place};
+use keyboard::Layout;
 use mod_api::client::hud_layout::PoseOp;
 use mod_api::{DrawContext, GuiDraw, ItemStack, Text};
 use std::collections::HashMap;
@@ -61,6 +65,8 @@ pub struct HudData {
     pub now_ms: u64,
     pub sprint_toggled: bool,
     pub sneak_toggled: bool,
+    /// The keyboard layout Auto has worked out from the player's typing.
+    pub auto_layout: Layout,
 }
 
 impl HudData {
@@ -116,8 +122,13 @@ pub struct KeysView {
     pub space: bool,
     pub cps: Option<(u32, u32)>,
     pub function_row: bool,
-    pub playstation: bool,
-    pub body: bool,
+    pub layout: Layout,
+    /// An index into [`keyboard::SIZES`].
+    pub board: usize,
+    /// An index into [`pad::STYLES`].
+    pub pad: usize,
+    /// The controller's body colour, with its opacity.
+    pub pad_colour: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -238,8 +249,10 @@ pub fn content(m: &Module, data: &HudData) -> Option<Content> {
             space: m.bool("space"),
             cps: m.bool("cps").then_some((data.cps_left, data.cps_right)),
             function_row: m.bool("function_row"),
-            playstation: m.choice("pad_style") == 1,
-            body: m.bool("pad_body"),
+            layout: Layout::from_setting(m.choice("kb_layout")).unwrap_or(data.auto_layout),
+            board: m.choice("kb_size"),
+            pad: m.choice("pad_style"),
+            pad_colour: with_alpha(m.colour("pad_colour"), m.f32("pad_opacity")),
         })),
         Id::Coordinates => {
             let [x, y, z] = data.position?;
@@ -382,114 +395,14 @@ pub fn editor_content(m: &Module, data: &HudData) -> Option<Content> {
     }
 }
 
-// The keyboard map: rows of (label, physical key name, width in key units). Each row is 15 units.
-type Row = &'static [(&'static str, &'static str, f32)];
-
-const FUNCTION_ROW: Row = &[
-    ("Esc", "key.keyboard.escape", 1.5),
-    ("F1", "key.keyboard.f1", 1.125),
-    ("F2", "key.keyboard.f2", 1.125),
-    ("F3", "key.keyboard.f3", 1.125),
-    ("F4", "key.keyboard.f4", 1.125),
-    ("F5", "key.keyboard.f5", 1.125),
-    ("F6", "key.keyboard.f6", 1.125),
-    ("F7", "key.keyboard.f7", 1.125),
-    ("F8", "key.keyboard.f8", 1.125),
-    ("F9", "key.keyboard.f9", 1.125),
-    ("F10", "key.keyboard.f10", 1.125),
-    ("F11", "key.keyboard.f11", 1.125),
-    ("F12", "key.keyboard.f12", 1.125),
-];
-
-const KEYBOARD: [Row; 5] = [
-    &[
-        ("`", "key.keyboard.grave.accent", 1.0),
-        ("1", "key.keyboard.1", 1.0),
-        ("2", "key.keyboard.2", 1.0),
-        ("3", "key.keyboard.3", 1.0),
-        ("4", "key.keyboard.4", 1.0),
-        ("5", "key.keyboard.5", 1.0),
-        ("6", "key.keyboard.6", 1.0),
-        ("7", "key.keyboard.7", 1.0),
-        ("8", "key.keyboard.8", 1.0),
-        ("9", "key.keyboard.9", 1.0),
-        ("0", "key.keyboard.0", 1.0),
-        ("-", "key.keyboard.minus", 1.0),
-        ("=", "key.keyboard.equal", 1.0),
-        ("Back", "key.keyboard.backspace", 2.0),
-    ],
-    &[
-        ("Tab", "key.keyboard.tab", 1.5),
-        ("Q", "key.keyboard.q", 1.0),
-        ("W", "key.keyboard.w", 1.0),
-        ("E", "key.keyboard.e", 1.0),
-        ("R", "key.keyboard.r", 1.0),
-        ("T", "key.keyboard.t", 1.0),
-        ("Y", "key.keyboard.y", 1.0),
-        ("U", "key.keyboard.u", 1.0),
-        ("I", "key.keyboard.i", 1.0),
-        ("O", "key.keyboard.o", 1.0),
-        ("P", "key.keyboard.p", 1.0),
-        ("[", "key.keyboard.left.bracket", 1.0),
-        ("]", "key.keyboard.right.bracket", 1.0),
-        ("\\", "key.keyboard.backslash", 1.5),
-    ],
-    &[
-        ("Caps", "key.keyboard.caps.lock", 1.75),
-        ("A", "key.keyboard.a", 1.0),
-        ("S", "key.keyboard.s", 1.0),
-        ("D", "key.keyboard.d", 1.0),
-        ("F", "key.keyboard.f", 1.0),
-        ("G", "key.keyboard.g", 1.0),
-        ("H", "key.keyboard.h", 1.0),
-        ("J", "key.keyboard.j", 1.0),
-        ("K", "key.keyboard.k", 1.0),
-        ("L", "key.keyboard.l", 1.0),
-        (";", "key.keyboard.semicolon", 1.0),
-        ("'", "key.keyboard.apostrophe", 1.0),
-        ("Enter", "key.keyboard.enter", 2.25),
-    ],
-    &[
-        ("Shift", "key.keyboard.left.shift", 2.25),
-        ("Z", "key.keyboard.z", 1.0),
-        ("X", "key.keyboard.x", 1.0),
-        ("C", "key.keyboard.c", 1.0),
-        ("V", "key.keyboard.v", 1.0),
-        ("B", "key.keyboard.b", 1.0),
-        ("N", "key.keyboard.n", 1.0),
-        ("M", "key.keyboard.m", 1.0),
-        (",", "key.keyboard.comma", 1.0),
-        (".", "key.keyboard.period", 1.0),
-        ("/", "key.keyboard.slash", 1.0),
-        ("Shift", "key.keyboard.right.shift", 2.75),
-    ],
-    &[
-        ("Ctrl", "key.keyboard.left.control", 1.5),
-        ("Win", "key.keyboard.left.win", 1.25),
-        ("Alt", "key.keyboard.left.alt", 1.25),
-        ("", "key.keyboard.space", 6.0),
-        ("Alt", "key.keyboard.right.alt", 1.25),
-        ("Win", "key.keyboard.right.win", 1.25),
-        ("Menu", "key.keyboard.menu", 1.25),
-        ("Ctrl", "key.keyboard.right.control", 1.25),
-    ],
-];
-
-/// The keyboard map's rows, with or without the function row.
-fn keyboard_rows(function_row: bool) -> Vec<Row> {
-    let mut rows = Vec::new();
-    if function_row {
-        rows.push(FUNCTION_ROW);
-    }
-    rows.extend(KEYBOARD);
-    rows
-}
-
-/// Every physical key the keyboard map shows, for `lib.rs` to read.
-pub fn keyboard_keys() -> impl Iterator<Item = &'static str> {
-    std::iter::once(FUNCTION_ROW)
-        .chain(KEYBOARD)
-        .flat_map(|row| row.iter().map(|(_, name, _)| *name))
+/// Every physical key Keystrokes' keyboard map shows for module `m`, for `lib.rs` to read.
+pub fn keyboard_keys(m: &Module, data: &HudData) -> Vec<&'static str> {
+    let layout = Layout::from_setting(m.choice("kb_layout")).unwrap_or(data.auto_layout);
+    keyboard::keys(layout, m.choice("kb_size"), m.bool("function_row"))
+        .0
+        .into_iter()
+        .map(|k| k.name)
+        .collect()
 }
 
 /// The mappings the WASD and controller modes show, for `lib.rs` to read.
@@ -516,10 +429,6 @@ fn unit(size: f32) -> f32 {
     (size * 0.7).round().max(8.0)
 }
 
-/// The controller's design is 120 by 76 at key size 22.
-const PAD_W: f32 = 120.0;
-const PAD_H: f32 = 76.0;
-
 /// The size of `content` in its own unscaled pixels; `width` measures text. `pad` is the
 /// padding setting.
 pub fn size(content: &Content, pad: f32, width: &dyn Fn(&str) -> f32) -> [f32; 2] {
@@ -534,12 +443,12 @@ pub fn size(content: &Content, pad: f32, width: &dyn Fn(&str) -> f32) -> [f32; 2
         Content::Keys(k) => match k.mode {
             MODE_KEYBOARD => {
                 let u = unit(k.size);
-                let rows = keyboard_rows(k.function_row).len() as f32;
-                [15.0 * u - k.gap, rows * (u + k.gap) - k.gap]
+                let (_, [w, h]) = keyboard::keys(k.layout, k.board, k.function_row);
+                [(w * u - k.gap).round(), (h * u - k.gap).round()]
             }
             MODE_CONTROLLER => {
                 let f = k.size / 22.0;
-                [(PAD_W * f).round(), (PAD_H * f).round()]
+                [(pad::W * f).round(), (pad::H * f).round()]
             }
             _ => {
                 let s = k.size;
@@ -690,29 +599,6 @@ impl Ops<'_> {
         self.fill([x, y + h - 1.0, w, 1.0], color);
         self.fill([x, y + 1.0, 1.0, h - 2.0], color);
         self.fill([x + w - 1.0, y + 1.0, 1.0, h - 2.0], color);
-    }
-
-    /// A filled circle of radius `r` around `c`, one fill a row.
-    fn circle(&mut self, c: [f32; 2], r: f32, color: u32) {
-        self.circle_below(c, r, f32::MIN, color);
-    }
-
-    /// The part of a filled circle at or below `top`, so it can join a shape above it without
-    /// a translucent overlap.
-    fn circle_below(&mut self, c: [f32; 2], r: f32, top: f32, color: u32) {
-        let r = r.max(1.0);
-        let rows = (r * 2.0).round() as i32;
-        for i in 0..rows {
-            let y = c[1] - r + i as f32;
-            if y < top {
-                continue;
-            }
-            let dy = i as f32 + 0.5 - r;
-            let half = (r * r - dy * dy).max(0.0).sqrt().round();
-            if half > 0.0 {
-                self.fill([c[0] - half, y, half * 2.0, 1.0], color);
-            }
-        }
     }
 
     fn text(&mut self, s: &str, x: f32, y: f32, color: u32) {
@@ -937,12 +823,10 @@ fn collect_texts(content: &Content, f: &mut dyn FnMut(&str)) {
                 f(&format!("{l} CPS"));
                 f(&format!("{r} CPS"));
             }
-            for row in std::iter::once(FUNCTION_ROW).chain(KEYBOARD) {
-                for (label, _, _) in row.iter() {
-                    f(label);
-                }
+            for key in keyboard::keys(k.layout, k.board, k.function_row).0 {
+                f(key.label);
             }
-            for s in ["A", "B", "X", "Y"] {
+            for s in ["A", "B", "X", "Y", "ZL", "ZR", "L", "R"] {
                 f(s);
             }
         }
@@ -1077,19 +961,33 @@ fn draw_wasd(
 fn draw_keyboard(o: &mut Ops<'_>, k: &KeysView, look: &Look, m: &Module, data: &HudData) {
     let pressed = m.colour("pressed_colour");
     let u = unit(k.size);
-    for (row_i, row) in keyboard_rows(k.function_row).iter().enumerate() {
-        let y = row_i as f32 * (u + k.gap);
-        let mut x: f32 = 0.0;
-        for (label, name, w) in row.iter() {
-            let r = [x.round(), y, (w * u - k.gap).round(), u];
-            key(o, look, pressed, r, label, None, data.glow(name));
-            x += w * u;
+    let (keys, _) = keyboard::keys(k.layout, k.board, k.function_row);
+    for key_ in keys {
+        let glow = data.glow(key_.name);
+        let last = key_.rects.len() - 1;
+        let mut first = None;
+        for (i, r) in key_.rects.iter().enumerate() {
+            // The parts of an L-shaped key meet: only the last part leaves the gap below.
+            let h = if i < last { r[3] * u } else { r[3] * u - k.gap };
+            let px = [
+                (r[0] * u).round(),
+                (r[1] * u).round(),
+                (r[2] * u - k.gap).round(),
+                h.round(),
+            ];
+            key(o, look, pressed, px, "", None, glow);
+            first.get_or_insert(px);
+        }
+        let Some(r) = first else { continue };
+        let ink = mix(look.ink(r[0] + r[1]), ink_on(pressed), glow);
+        match key_.icon {
+            Some(icon) => o.icon(icon, r, ink),
+            None => o.text_in(key_.label, r, ink),
         }
     }
 }
 
-/// The controller: triggers and bumpers on top, the left stick and face buttons above, the
-/// D-pad and right stick below, in a 120 by 76 design scaled to the key size.
+/// The controller, in the style the player picked.
 fn draw_controller(
     o: &mut Ops<'_>,
     k: &KeysView,
@@ -1098,150 +996,16 @@ fn draw_controller(
     data: &HudData,
     size: [f32; 2],
 ) {
-    let pressed = m.colour("pressed_colour");
-    let f = size[0] / PAD_W;
-    let p = |x: f32, y: f32| [x * f, y * f];
-    let r4 = |x: f32, y: f32, w: f32, h: f32| [x * f, y * f, w * f, h * f];
-    let idle = if look.background >> 24 == 0 {
-        0xA0202028
-    } else {
-        look.background
-    };
-    let line = look.ink(0.0);
-    // Wells for the sticks, pad and buttons: darker than the body, so they read on it.
-    let well = if k.body {
-        // Black at the body's own opacity: the colour darkens, the translucency stays.
-        mix(idle, idle & 0xFF00_0000, 0.55)
-    } else {
-        idle
-    };
-
-    // The body: a bar with a grip under each end, drawn so no two parts overlap.
-    if k.body {
-        let bar = r4(6.0, 16.0, 108.0, 40.0);
-        o.rounded(bar, idle);
-        let below = bar[1] + bar[3];
-        o.circle_below(p(20.0, 52.0), 18.0 * f, below, idle);
-        o.circle_below(p(100.0, 52.0), 18.0 * f, below, idle);
-    }
-
-    // Triggers and bumpers, as labelled bars that fill when held.
-    let (lt, rt, lb, rb) = if k.playstation {
-        ("L2", "R2", "L1", "R1")
-    } else {
-        ("LT", "RT", "LB", "RB")
-    };
-    let bar = |o: &mut Ops<'_>, r: [f32; 4], label: &str, glow: f32| {
-        o.rounded(r, mix(idle, fade(pressed, 0.9), glow));
-        o.text_in(label, r, mix(line, ink_on(pressed), glow));
-    };
-    bar(o, r4(8.0, 0.0, 28.0, 7.0), lt, data.glow("key.use"));
-    bar(o, r4(84.0, 0.0, 28.0, 7.0), rt, data.glow("key.attack"));
-    bar(o, r4(8.0, 8.5, 28.0, 6.0), lb, 0.0);
-    bar(o, r4(84.0, 8.5, 28.0, 6.0), rb, 0.0);
-
-    // A stick: its well, and its cap pushed `dir` and lit when clicked.
-    let stick = |o: &mut Ops<'_>, c: [f32; 2], dir: [f32; 2], glow: f32| {
-        o.circle(c, 9.0 * f, well);
-        let cap = [c[0] + dir[0] * 4.0 * f, c[1] - dir[1] * 4.0 * f];
-        o.circle(cap, 5.5 * f, mix(fade(line, 0.85), pressed, glow));
-        o.circle(cap, 3.0 * f, mix(idle, ink_on(pressed), glow));
-    };
-    stick(o, p(26.0, 32.0), data.move_dir, data.glow("key.sprint"));
-    stick(
+    let labels = look.ink(0.0);
+    pad::draw(
         o,
-        p(76.0, 54.0),
-        [data.look[0], -data.look[1]],
-        data.glow("key.sneak"),
+        k.pad,
+        k.pad_colour,
+        m.colour("pressed_colour"),
+        labels,
+        data,
+        size,
     );
-
-    // The D-pad.
-    let dp = |o: &mut Ops<'_>, r: [f32; 4], glow: f32| {
-        o.fill(r, mix(well, fade(pressed, 0.9), glow));
-    };
-    let c = [44.0, 54.0];
-    dp(o, r4(c[0] - 3.0, c[1] - 3.0, 6.0, 6.0), 0.0);
-    dp(
-        o,
-        r4(c[0] - 3.0, c[1] - 9.0, 6.0, 6.0),
-        data.glow("key.chat"),
-    );
-    dp(
-        o,
-        r4(c[0] - 3.0, c[1] + 3.0, 6.0, 6.0),
-        data.glow("key.drop"),
-    );
-    dp(
-        o,
-        r4(c[0] - 9.0, c[1] - 3.0, 6.0, 6.0),
-        data.glow("key.pickItem"),
-    );
-    dp(o, r4(c[0] + 3.0, c[1] - 3.0, 6.0, 6.0), 0.0);
-
-    // View and Menu.
-    o.rounded(
-        r4(51.0, 30.0, 7.0, 4.0),
-        mix(well, fade(pressed, 0.9), data.glow("key.togglePerspective")),
-    );
-    o.rounded(r4(62.0, 30.0, 7.0, 4.0), well);
-
-    // Face buttons: (centre, Xbox label, PlayStation symbol, colour, mapping).
-    let faces: [([f32; 2], &str, Icon, u32, &str); 4] = if k.playstation {
-        [
-            ([94.0, 41.0], "X", Icon::PadCross, 0xFF7CB2FF, "key.jump"),
-            ([103.0, 32.0], "O", Icon::PadCircle, 0xFFFF6B6B, ""),
-            (
-                [85.0, 32.0],
-                "[]",
-                Icon::PadSquare,
-                0xFFF472B6,
-                "key.swapOffhand",
-            ),
-            (
-                [94.0, 23.0],
-                "^",
-                Icon::PadTriangle,
-                0xFF34D399,
-                "key.inventory",
-            ),
-        ]
-    } else {
-        [
-            ([94.0, 41.0], "A", Icon::PadCross, 0xFF22C55E, "key.jump"),
-            ([103.0, 32.0], "B", Icon::PadCircle, 0xFFEF4444, ""),
-            (
-                [85.0, 32.0],
-                "X",
-                Icon::PadSquare,
-                0xFF3B82F6,
-                "key.swapOffhand",
-            ),
-            (
-                [94.0, 23.0],
-                "Y",
-                Icon::PadTriangle,
-                0xFFFACC15,
-                "key.inventory",
-            ),
-        ]
-    };
-    for (centre, letter, symbol, colour, mapping) in faces {
-        let glow = if mapping.is_empty() {
-            0.0
-        } else {
-            data.glow(mapping)
-        };
-        let c = p(centre[0], centre[1]);
-        let r = 4.5 * f;
-        o.circle(c, r, mix(well, colour, glow));
-        let ink = mix(colour, ink_on(colour), glow);
-        let cell = [c[0] - r, c[1] - r, r * 2.0, r * 2.0];
-        if k.playstation {
-            o.icon(symbol, cell, ink);
-        } else {
-            o.text_in(letter, cell, ink);
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1315,15 +1079,6 @@ mod tests {
         assert!(
             matches!(content(sprint, &data), Some(Content::Lines(l)) if l == ["Sprinting (Toggled)"])
         );
-    }
-
-    #[test]
-    fn every_keyboard_row_is_fifteen_units() {
-        for row in std::iter::once(FUNCTION_ROW).chain(KEYBOARD) {
-            let w: f32 = row.iter().map(|(_, _, w)| w).sum();
-            assert!((w - 15.0).abs() < 1e-4, "{row:?} is {w}");
-        }
-        assert!(keyboard_keys().any(|k| k == "key.keyboard.right.shift"));
     }
 
     fn set(m: &mut Module, key: &str, f: impl Fn(&mut crate::settings::Setting)) {
