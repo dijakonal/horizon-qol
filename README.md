@@ -11,12 +11,24 @@ Minecraft: Java Edition 26.3, with a client-style mod menu and a HUD editor.
   edges and middle and to other elements, with a blue guide line). Drag one of its corner
   handles to resize it, like a window: the opposite corner stays put. Scrolling over it resizes
   it too. Right-click it for its settings. **Reset layout** puts every element back.
-- **Mods** in the middle opens the mod menu: switch modules on and off, search them, and press
-  `...` on a card for its settings. **Edit HUD** goes back to the editor.
-- Right Shift or Esc closes it. Both keys the mod uses (**Open Mod Menu** and **Zoom**) are in
-  *Options > Controls* under Horizon QoL, where you can rebind them.
+- **Mods** in the middle opens the mod menu. Click anywhere on a module's card for its settings;
+  the ENABLED / DISABLED bar on the card switches it on and off. Search with the box at the top.
+  **Edit HUD** goes back to the editor.
+- Right Shift or Esc closes it.
 - Settings are saved when you close the screen, in `config/horizon_qol/settings.txt` in the game
   folder.
+
+### Keys
+
+All of the mod's keys are in *Options > Controls* under Horizon QoL, where you change them; each
+module's settings page shows the key it uses.
+
+| Key | Default | Does |
+| --- | --- | --- |
+| Open Mod Menu | Right Shift | Opens the HUD editor |
+| Zoom | C | Zooms while held, or on and off in Toggle mode |
+| Toggle Sprint | V | Sprinting on or off, while the module is on |
+| Toggle Sneak | not bound | Sneaking on or off, while the module is on |
 
 ![Resizing an element by its corner](docs/resize.png)
 
@@ -26,25 +38,46 @@ Minecraft: Java Edition 26.3, with a client-style mod menu and a HUD editor.
 
 ## Modules
 
-| Module | What it does | Settings besides the common ones |
+| Module | What it does | Its own settings |
 | --- | --- | --- |
-| FPS | Frames per second | Show label |
-| CPS | Clicks per second, left and right | Show right clicks, show label |
-| Keystrokes | W A S D, both mouse buttons and the space bar, lit while held | Mouse buttons, space bar, CPS on the mouse keys, pressed colour |
-| Coordinates | X, Y, Z, the way you face, the dimension | Direction, dimension, decimals |
-| Speed | Blocks per second | Count vertical speed |
-| Armor Status | Your armor and held item with durability | Durability, as percent, held item |
-| Potion Effects | Active effects with level and time left | Show level |
+| FPS | Frames per second | Format |
+| CPS | Clicks per second, left and right | Right clicks, label |
+| Keystrokes | The keys you press, in three modes (below) | Mode, key size, key gap, pressed colour, fade-out, and each mode's options |
+| Coordinates | X, Y, Z, the way you face, the dimension | Lines or one line, direction, dimension, decimals |
+| Speed | How fast you move | Vertical speed, m/s or km/h |
+| Armor Status | Your armor and held item with durability | Vertical or horizontal, durability, as percent, held item |
+| Potion Effects | Active effects with level and time left | Level, time left |
 | Clock | Real-world time | 24-hour, seconds, time zone (UTC offset) |
-| Toggle Sprint | Sprints for you while you walk forward | |
-| Zoom | Hold C to zoom; scroll while zooming to zoom more or less | Zoom amount, smooth, scroll to adjust, slower mouse |
+| Toggle Sprint | Its key switches sprinting on and off | Key, status on the HUD, stay on after a restart |
+| Toggle Sneak | Its key switches sneaking on and off | Key, status on the HUD |
+| Zoom | Zoom in; scroll while zooming to zoom more or less | Key, hold or toggle, zoom amount, smooth, scroll to adjust, slower mouse |
 
-Every HUD module also has **Scale**, **Text colour**, **Text shadow**, **Background** and
-**Background opacity**. FPS, Coordinates and Zoom are on to start with.
+Every element on the HUD also has these, in two groups:
+- **Text:** scale, colour, rainbow text and its speed, shadow, brackets `[ ]`, and line alignment.
+- **Background:** on or off, colour, opacity, a border and its colour, and padding.
+
+FPS, Coordinates and Zoom are on to start with.
+
+### Keystrokes modes
+
+- **WASD:** W A S D, both mouse buttons (with CPS) and the space bar.
+- **Keyboard:** a full keyboard map, Esc and F1-F12 optional, that lights every key you press.
+- **Controller:** a gamepad. Buttons light as their actions happen (A jump, X swap hands,
+  Y inventory, LT use, RT attack, stick clicks sprint and sneak, the D-pad's drop, pick and
+  chat). The left stick leans the way you move and the right stick the way you turn. Xbox or
+  PlayStation button symbols. Horizon gives mods no direct read of a pad, so the controller view
+  shows what the game does with your input. That also works for keyboard and mouse players. The
+  bumpers don't light, since hotbar changes aren't visible to a mod.
+
+![Keystrokes as a keyboard](docs/keys-keyboard.png)
+
+![Keystrokes as a controller](docs/keys-controller.png)
 
 Notes:
-- Toggle Sprint leaves the game's own *Toggle Sprint* option alone: with that option on, it does
-  nothing, since holding the key would flip sprinting.
+- Toggle Sprint and Toggle Sneak leave the game's own *Toggle Sprint* and *Toggle Sneak* options
+  alone: with the game's option on, the module does nothing, since holding the key would flip it.
+- A mod can read its keys but not change them, so they are rebound in Controls rather than in
+  the menu.
 - The Clock can't read your computer's time zone through the game, so set yours with the
   time-zone slider (UTC+1 for central Europe, for example).
 
@@ -99,10 +132,11 @@ that exact game build. `cargo horizon-mod update` moves the pin to the newest Ni
 ```text
 horizon-mod.toml          the manifest: id, side, and the pinned Horizon build
 Cargo.toml                depends only on horizon-mod-api from the pinned SDK
-src/lib.rs                the hooks: key mappings, reading the game, drawing the HUD, zoom, sprint, saving
+src/lib.rs                the hooks: key mappings, reading the game, drawing the HUD, zoom, toggles, saving
 src/modules.rs            the modules, their settings and default places; the config file's text
-src/settings.rs           switches, sliders and colours, and reading and writing them
-src/hud.rs                what each HUD element shows, its size, and drawing it scaled
+src/settings.rs           switches, sliders, colours, choices, keybind rows and headings; reading and writing them
+src/icons.rs              the pixel-art icons, drawn from small bitmaps
+src/hud.rs                what each HUD element shows, its size, and drawing it scaled; Keystrokes' three modes
 src/ui.rs                 the screen: the HUD editor and the mod menu
 src/ui/tests.rs           the screen's tests, with a fake draw context that can write SVG previews
 assets/horizon_qol/lang/  the key mappings' names in Options > Controls

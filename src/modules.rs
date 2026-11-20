@@ -33,6 +33,7 @@ pub enum Id {
     Effects,
     Clock,
     ToggleSprint,
+    ToggleSneak,
     Zoom,
 }
 
@@ -49,10 +50,23 @@ impl Id {
             Id::Effects => "effects",
             Id::Clock => "clock",
             Id::ToggleSprint => "toggle_sprint",
+            Id::ToggleSneak => "toggle_sneak",
             Id::Zoom => "zoom",
         }
     }
 }
+
+/// Keystrokes' modes, in the order of its Mode setting.
+pub const KEYSTROKES_MODES: &[&str] = &["WASD", "Keyboard", "Controller"];
+pub const MODE_WASD: usize = 0;
+pub const MODE_KEYBOARD: usize = 1;
+pub const MODE_CONTROLLER: usize = 2;
+
+/// The Controls mappings the mod registers, by id, with their default keys.
+pub const MAP_OPEN_MENU: &str = "open_menu";
+pub const MAP_ZOOM: &str = "zoom";
+pub const MAP_SPRINT: &str = "toggle_sprint";
+pub const MAP_SNEAK: &str = "toggle_sneak";
 
 /// Where a HUD element sits: its top left as a fraction of the screen, so it keeps its place when
 /// the window or the GUI scale changes. Its size comes from its content times its scale setting.
@@ -78,13 +92,25 @@ pub struct Module {
     pub default_place: Option<Place>,
 }
 
-/// The settings every HUD element has.
-fn hud_settings(extra: Vec<Setting>) -> Vec<Setting> {
-    let mut s = vec![
+/// A HUD module's settings: its own first, under its name, then the look every HUD element has.
+fn hud_settings(own: Vec<Setting>) -> Vec<Setting> {
+    let mut s = Vec::new();
+    if !own.is_empty() {
+        s.push(Setting::heading("Module"));
+        s.extend(own);
+    }
+    s.extend([
+        Setting::heading("Text"),
         Setting::slider("scale", "Scale", 1.0, [0.5, 3.0, 0.05], "{}x"),
         Setting::colour("text_colour", "Text colour", 0xFFFFFFFF),
+        Setting::toggle("chroma", "Rainbow text", false),
+        Setting::slider("chroma_speed", "Rainbow speed", 1.0, [0.2, 5.0, 0.1], "{}x"),
         Setting::toggle("text_shadow", "Text shadow", true),
+        Setting::toggle("brackets", "Brackets [ ]", false),
+        Setting::choice("align", "Align lines", 0, &["Left", "Centre", "Right"]),
+        Setting::heading("Background"),
         Setting::toggle("background", "Background", true),
+        Setting::colour("background_colour", "Background colour", 0xFF000000),
         Setting::slider(
             "background_opacity",
             "Background opacity",
@@ -92,9 +118,19 @@ fn hud_settings(extra: Vec<Setting>) -> Vec<Setting> {
             [0.0, 100.0, 5.0],
             "{}%",
         ),
-    ];
-    s.extend(extra);
+        Setting::toggle("border", "Border", false),
+        Setting::colour("border_colour", "Border colour", 0xFF4F8CFF),
+        Setting::slider("padding", "Padding", 4.0, [0.0, 10.0, 1.0], "{}px"),
+    ]);
     s
+}
+
+/// Changes the default (and value) of setting `key` in `settings`.
+fn with_default(mut settings: Vec<Setting>, key: &str, f: impl Fn(&mut Setting)) -> Vec<Setting> {
+    if let Some(s) = settings.iter_mut().find(|s| s.key() == key) {
+        f(s);
+    }
+    settings
 }
 
 impl Module {
@@ -147,6 +183,10 @@ impl Module {
         settings::get_colour(&self.settings, key)
     }
 
+    pub fn choice(&self, key: &str) -> usize {
+        settings::get_choice(&self.settings, key)
+    }
+
     /// Puts the module back as it was first installed: off or on, settings and place.
     pub fn reset(&mut self) {
         self.enabled = self.default_enabled;
@@ -158,7 +198,12 @@ impl Module {
 /// Every module, in the order the menu lists them.
 pub fn defaults() -> Vec<Module> {
     use Category::*;
-    let hud = |extra| hud_settings(extra);
+    let off = |s: &mut Setting| {
+        if let Setting::Toggle { value, default, .. } = s {
+            *value = false;
+            *default = false;
+        }
+    };
     vec![
         Module::new(
             Id::Fps,
@@ -168,7 +213,12 @@ pub fn defaults() -> Vec<Module> {
             0xFF3B82F6,
             true,
             Some([0.0, 0.0]),
-            hud(vec![Setting::toggle("label", "Show label", true)]),
+            hud_settings(vec![Setting::choice(
+                "format",
+                "Format",
+                0,
+                &["144 FPS", "FPS: 144", "144"],
+            )]),
         ),
         Module::new(
             Id::Cps,
@@ -178,7 +228,7 @@ pub fn defaults() -> Vec<Module> {
             0xFF6366F1,
             false,
             Some([0.0, 0.07]),
-            hud(vec![
+            hud_settings(vec![
                 Setting::toggle("right", "Show right clicks", true),
                 Setting::toggle("label", "Show label", true),
             ]),
@@ -186,33 +236,36 @@ pub fn defaults() -> Vec<Module> {
         Module::new(
             Id::Keystrokes,
             "Keystrokes",
-            "Shows your movement keys and mouse buttons as you press them.",
+            "Shows the keys you press: WASD and the mouse, a whole keyboard, or a controller.",
             Hud,
             0xFF0EA5E9,
             false,
             Some([0.0, 1.0]),
-            {
-                let mut s = hud(vec![
+            with_default(
+                hud_settings(vec![
+                    Setting::choice("mode", "Mode", MODE_WASD, KEYSTROKES_MODES),
+                    Setting::slider("key_size", "Key size", 22.0, [14.0, 32.0, 1.0], "{}px"),
+                    Setting::slider("key_gap", "Key gap", 2.0, [0.0, 6.0, 1.0], "{}px"),
+                    Setting::colour("pressed_colour", "Pressed colour", 0xFFFFFFFF),
+                    Setting::toggle("fade", "Fade out when let go", true),
+                    Setting::heading("WASD mode"),
                     Setting::toggle("mouse", "Show mouse buttons", true),
                     Setting::toggle("space", "Show space bar", true),
                     Setting::toggle("cps", "CPS on mouse buttons", true),
-                    Setting::colour("pressed_colour", "Pressed colour", 0xFFFFFFFF),
-                ]);
-                // Keystrokes reads best on its keys' own backgrounds.
-                for setting in &mut s {
-                    if let Setting::Slider {
-                        key: "background_opacity",
-                        value,
-                        default,
-                        ..
-                    } = setting
-                    {
+                    Setting::heading("Keyboard mode"),
+                    Setting::toggle("function_row", "Show Esc and F1-F12", true),
+                    Setting::heading("Controller mode"),
+                    Setting::choice("pad_style", "Buttons", 0, &["Xbox", "PlayStation"]),
+                    Setting::toggle("pad_body", "Show controller body", true),
+                ]),
+                "background_opacity",
+                |s| {
+                    if let Setting::Slider { value, default, .. } = s {
                         *value = 55.0;
                         *default = 55.0;
                     }
-                }
-                s
-            },
+                },
+            ),
         ),
         Module::new(
             Id::Coordinates,
@@ -222,7 +275,8 @@ pub fn defaults() -> Vec<Module> {
             0xFF14B8A6,
             true,
             Some([0.0, 0.14]),
-            hud(vec![
+            hud_settings(vec![
+                Setting::choice("layout", "Layout", 0, &["Lines", "One line"]),
                 Setting::toggle("direction", "Show direction", true),
                 Setting::toggle("dimension", "Show dimension", false),
                 Setting::toggle("decimals", "Show decimals", false),
@@ -236,11 +290,10 @@ pub fn defaults() -> Vec<Module> {
             0xFF10B981,
             false,
             Some([0.0, 0.34]),
-            hud(vec![Setting::toggle(
-                "vertical",
-                "Count vertical speed",
-                false,
-            )]),
+            hud_settings(vec![
+                Setting::toggle("vertical", "Count vertical speed", false),
+                Setting::choice("unit", "Unit", 0, &["m/s", "km/h"]),
+            ]),
         ),
         Module::new(
             Id::Armor,
@@ -250,27 +303,16 @@ pub fn defaults() -> Vec<Module> {
             0xFFF59E0B,
             false,
             Some([1.0, 1.0]),
-            {
-                let mut s = hud(vec![
+            with_default(
+                hud_settings(vec![
+                    Setting::choice("layout", "Layout", 0, &["Vertical", "Horizontal"]),
                     Setting::toggle("durability", "Show durability", true),
                     Setting::toggle("percent", "Durability as percent", false),
                     Setting::toggle("held", "Show held item", true),
-                ]);
-                // Icons read without a box behind them.
-                for setting in &mut s {
-                    if let Setting::Toggle {
-                        key: "background",
-                        value,
-                        default,
-                        ..
-                    } = setting
-                    {
-                        *value = false;
-                        *default = false;
-                    }
-                }
-                s
-            },
+                ]),
+                "background",
+                off,
+            ),
         ),
         Module::new(
             Id::Effects,
@@ -280,7 +322,10 @@ pub fn defaults() -> Vec<Module> {
             0xFFEC4899,
             false,
             Some([1.0, 0.08]),
-            hud(vec![Setting::toggle("level", "Show level", true)]),
+            hud_settings(vec![
+                Setting::toggle("level", "Show level", true),
+                Setting::toggle("time", "Show time left", true),
+            ]),
         ),
         Module::new(
             Id::Clock,
@@ -290,7 +335,7 @@ pub fn defaults() -> Vec<Module> {
             0xFF8B5CF6,
             false,
             Some([1.0, 0.0]),
-            hud(vec![
+            hud_settings(vec![
                 Setting::toggle("twenty_four", "24-hour clock", true),
                 Setting::toggle("seconds", "Show seconds", false),
                 Setting::slider(
@@ -305,22 +350,49 @@ pub fn defaults() -> Vec<Module> {
         Module::new(
             Id::ToggleSprint,
             "Toggle Sprint",
-            "Sprints for you whenever you walk forward.",
+            "Press its key to sprint without holding a key; press again to stop.",
             Utility,
             0xFFEF4444,
             false,
-            None,
-            vec![],
+            Some([0.5, 1.0]),
+            with_default(
+                hud_settings(vec![
+                    Setting::bind(MAP_SPRINT, "Toggle key"),
+                    Setting::toggle("status", "Show status on the HUD", true),
+                    Setting::toggle("remember", "Stay on after a restart", false),
+                ]),
+                "background",
+                off,
+            ),
+        ),
+        Module::new(
+            Id::ToggleSneak,
+            "Toggle Sneak",
+            "Press its key to sneak without holding Shift; press again to stand up.",
+            Utility,
+            0xFF64748B,
+            false,
+            Some([0.5, 0.93]),
+            with_default(
+                hud_settings(vec![
+                    Setting::bind(MAP_SNEAK, "Toggle key"),
+                    Setting::toggle("status", "Show status on the HUD", true),
+                ]),
+                "background",
+                off,
+            ),
         ),
         Module::new(
             Id::Zoom,
             "Zoom",
-            "Hold C (set it in Controls) to zoom in. Scroll while zooming to zoom more or less.",
+            "Hold its key (C to start with) to zoom in. Scroll while zooming to zoom more or less.",
             Utility,
             0xFFF97316,
             true,
             None,
             vec![
+                Setting::bind(MAP_ZOOM, "Zoom key"),
+                Setting::choice("key_mode", "Key", 0, &["Hold", "Toggle"]),
                 Setting::slider("factor", "Zoom amount", 4.0, [1.5, 10.0, 0.5], "{}x"),
                 Setting::toggle("smooth", "Smooth zoom", true),
                 Setting::toggle("scroll", "Scroll to adjust", true),
@@ -341,7 +413,7 @@ pub fn save(modules: &[Module]) -> String {
         if let Some(p) = m.place {
             out += &format!("{k}.x={}\n{k}.y={}\n", p.x, p.y);
         }
-        for s in &m.settings {
+        for s in m.settings.iter().filter(|s| !s.key().is_empty()) {
             out += &format!("{k}.{}={}\n", s.key(), s.write());
         }
     }
@@ -376,7 +448,11 @@ pub fn load(modules: &mut [Module], text: &str) {
                 }
             }
             _ => {
-                if let Some(s) = m.settings.iter_mut().find(|s| s.key() == field) {
+                if let Some(s) = m
+                    .settings
+                    .iter_mut()
+                    .find(|s| !s.key().is_empty() && s.key() == field)
+                {
                     s.read(&value);
                 }
             }
@@ -393,7 +469,12 @@ mod tests {
         let mut mods = defaults();
         mods[1].enabled = true;
         mods[1].place = Some(Place { x: 0.4, y: 0.6 });
-        mods[1].settings[0].set_slider(1.5);
+        let scale = mods[1]
+            .settings
+            .iter()
+            .position(|s| s.key() == "scale")
+            .unwrap();
+        mods[1].settings[scale].set_slider(1.5);
         let text = save(&mods);
         let mut again = defaults();
         load(&mut again, &text);
@@ -408,7 +489,12 @@ mod tests {
         let mods = defaults();
         for (i, a) in mods.iter().enumerate() {
             assert!(mods[i + 1..].iter().all(|b| b.id.key() != a.id.key()));
-            let keys: Vec<_> = a.settings.iter().map(Setting::key).collect();
+            let keys: Vec<_> = a
+                .settings
+                .iter()
+                .map(Setting::key)
+                .filter(|k| !k.is_empty())
+                .collect();
             for (j, k) in keys.iter().enumerate() {
                 assert!(!keys[j + 1..].contains(k), "{} has {k} twice", a.name);
             }

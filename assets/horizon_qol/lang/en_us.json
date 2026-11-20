@@ -1,4 +1,6 @@
 {
   "key.horizon_qol.open_menu": "Open Mod Menu",
-  "key.horizon_qol.zoom": "Zoom"
+  "key.horizon_qol.zoom": "Zoom",
+  "key.horizon_qol.toggle_sprint": "Toggle Sprint",
+  "key.horizon_qol.toggle_sneak": "Toggle Sneak"
 }

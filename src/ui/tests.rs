@@ -1,7 +1,7 @@
 //! The screen drawn on a fake `DrawContext` that keeps the calls, so layout, clicks and drags are
 //! checked without the game. `HORIZON_QOL_PREVIEW=<dir>` also writes each frame as an SVG.
 use super::*;
-use crate::hud::{Effect, HudData, Keys};
+use crate::hud::{Effect, HudData};
 use crate::modules::{self, Id};
 use mod_api::client::hud_layout::PoseOp;
 use mod_api::text::TextContent;
@@ -186,11 +186,20 @@ fn data() -> HudData {
         fps: 144,
         cps_left: 7,
         cps_right: 2,
-        keys: Keys {
-            forward: true,
-            attack: true,
-            ..Keys::default()
-        },
+        glow: [
+            ("key.forward", 1.0),
+            ("key.attack", 1.0),
+            ("key.right", 0.5),
+            ("key.jump", 1.0),
+            ("key.keyboard.w", 1.0),
+            ("key.keyboard.left.shift", 1.0),
+            ("key.keyboard.space", 0.6),
+        ]
+        .into_iter()
+        .collect(),
+        move_dir: [0.0, 1.0],
+        look: [0.6, -0.2],
+        sprint_toggled: true,
         position: Some([-312.7, 71.0, 1024.2]),
         yaw: 200.0,
         dimension: "minecraft:overworld".into(),
@@ -217,6 +226,11 @@ fn all_on() -> Vec<Module> {
 
 fn frame(g: &mut Gui, size: [f32; 2], mouse: [f32; 2], mods: &[Module], name: &str) -> Recorder {
     let mut r = Recorder::new(size);
+    g.binds = vec![
+        ("zoom", "C".to_owned()),
+        ("toggle_sprint", "V".to_owned()),
+        ("toggle_sneak", "Not bound".to_owned()),
+    ];
     g.draw(&mut r, size, mouse, mods, &data(), "Right Shift");
     r.write(name);
     r
@@ -290,82 +304,56 @@ fn tabs_and_search_filter_the_grid() {
 #[test]
 fn options_switches_sliders_and_swatches_change_settings() {
     let mut mods = all_on();
-    let fps = mods.iter().position(|m| m.id == Id::Keystrokes).unwrap();
+    let ks = mods.iter().position(|m| m.id == Id::Keystrokes).unwrap();
+    let key =
+        |mods: &[Module], k: &str| mods[ks].settings.iter().position(|s| s.key() == k).unwrap();
     let mut g = gui(View::Menu);
-    g.open_options(fps);
-    g.opened = Instant::now() - Duration::from_secs(1);
-    frame(&mut g, SIZE, [0.0, 0.0], &mods, "options");
 
     // The background switch.
-    let bg = mods[fps]
-        .settings
-        .iter()
-        .position(|s| s.key() == "background")
-        .unwrap();
-    let at = centre_of(
-        &g,
-        Target::Setting {
-            module: fps,
+    let bg = key(&mods, "background");
+    let t = options_until(&mut g, &mut mods, Id::Keystrokes, "options", |t| {
+        *t == Target::Setting {
+            module: ks,
             setting: bg,
-        },
-    );
-    assert!(g.mouse_pressed(at, 0, &mut mods));
-    assert!(!mods[fps].bool("background"));
+        }
+    });
+    assert!(g.mouse_pressed(centre_of(&g, t), 0, &mut mods));
+    assert!(!mods[ks].bool("background"));
 
     // The scale slider: a press at its right end, then a drag back to its left end.
-    let scale = mods[fps]
-        .settings
-        .iter()
-        .position(|s| s.key() == "scale")
-        .unwrap();
-    let (r, _) = *g
-        .hits
-        .iter()
-        .find(|(_, t)| {
-            *t == Target::Setting {
-                module: fps,
-                setting: scale,
-            }
-        })
-        .unwrap();
+    let scale = key(&mods, "scale");
+    let t = options_until(&mut g, &mut mods, Id::Keystrokes, "options", |t| {
+        *t == Target::Setting {
+            module: ks,
+            setting: scale,
+        }
+    });
+    let (r, _) = *g.hits.iter().find(|(_, x)| *x == t).unwrap();
     assert!(g.mouse_pressed([r[0] + r[2] - 4.0, r[1] + 5.0], 0, &mut mods));
-    assert!((mods[fps].f32("scale") - 3.0).abs() < 1e-4);
+    assert!((mods[ks].f32("scale") - 3.0).abs() < 1e-4);
     assert!(g.mouse_dragged([r[0] - 50.0, r[1] + 5.0], &mut mods));
-    assert!((mods[fps].f32("scale") - 0.5).abs() < 1e-4);
+    assert!((mods[ks].f32("scale") - 0.5).abs() < 1e-4);
     assert!(g.mouse_released());
 
     // A swatch.
-    let colour = mods[fps]
-        .settings
-        .iter()
-        .position(|s| s.key() == "text_colour")
-        .unwrap();
-    let target = Target::Swatch {
-        module: fps,
-        setting: colour,
-        swatch: 2,
-    };
-    // The swatches may be below the fold: scroll down until they are drawn.
-    for _ in 0..10 {
-        if g.hits.iter().any(|(_, t)| *t == target) {
-            break;
+    let colour = key(&mods, "text_colour");
+    let t = options_until(&mut g, &mut mods, Id::Keystrokes, "options-scrolled", |t| {
+        *t == Target::Swatch {
+            module: ks,
+            setting: colour,
+            swatch: 4,
         }
-        let c = [g.content[0] + 4.0, g.content[1] + 4.0];
-        g.scroll(c, -1.0, &mut mods);
-        frame(&mut g, SIZE, [0.0, 0.0], &mods, "options-scrolled");
-    }
-    assert!(g.mouse_pressed(centre_of(&g, target), 0, &mut mods));
-    assert_eq!(mods[fps].colour("text_colour"), PALETTE[2]);
+    });
+    assert!(g.mouse_pressed(centre_of(&g, t), 0, &mut mods));
+    assert_eq!(mods[ks].colour("text_colour"), PALETTE[4]);
 
     // Reset puts it all back.
-    for _ in 0..10 {
-        let c = [g.content[0] + 4.0, g.content[1] + 4.0];
-        g.scroll(c, -1.0, &mut mods);
-        frame(&mut g, SIZE, [0.0, 0.0], &mods, "options-scrolled");
-    }
-    assert!(g.mouse_pressed(centre_of(&g, Target::ResetModule(fps)), 0, &mut mods));
-    assert!(mods[fps].bool("background"));
-    assert!((mods[fps].f32("scale") - 1.0).abs() < 1e-4);
+    let t = options_until(&mut g, &mut mods, Id::Keystrokes, "options-scrolled", |t| {
+        *t == Target::ResetModule(ks)
+    });
+    assert!(g.mouse_pressed(centre_of(&g, t), 0, &mut mods));
+    assert!(mods[ks].bool("background"));
+    assert!((mods[ks].f32("scale") - 1.0).abs() < 1e-4);
 }
 
 #[test]
@@ -438,9 +426,9 @@ fn the_hud_preview() {
             continue;
         };
         let scale = m.f32("scale");
-        let unscaled = crate::hud::size(&content, &|s| r.text_width(s));
+        let unscaled = crate::hud::measure(m, &content, &|s| r.text_width(s));
         let rect = crate::hud::rect(place, scale, unscaled, SIZE);
-        crate::hud::draw(&mut r, m, &content, [rect[0], rect[1]], scale);
+        crate::hud::draw(&mut r, m, &content, [rect[0], rect[1]], scale, &d);
     }
     assert!(r.texts.iter().any(|(t, _)| t == "144 FPS"));
     assert!(r.texts.iter().any(|(t, _)| t == "X: -313"));
@@ -504,4 +492,133 @@ fn dragging_a_corner_resizes_about_the_opposite_corner() {
     assert!(g.mouse_dragged([-1000.0, -1000.0], &mut mods));
     assert!((mods[co].f32("scale") - 3.0).abs() < 1e-4);
     assert!(g.mouse_released());
+}
+
+#[test]
+fn clicking_anywhere_on_a_card_opens_its_settings() {
+    let mut mods = modules::defaults();
+    let mut g = gui(View::Menu);
+    frame(&mut g, SIZE, [0.0, 0.0], &mods, "grid");
+    let (card, _) = *g
+        .hits
+        .iter()
+        .find(|(_, t)| *t == Target::Options(2))
+        .unwrap();
+    // The card's top left corner, well away from its bar and gear.
+    let before = mods[2].enabled;
+    assert!(g.mouse_pressed([card[0] + 3.0, card[1] + 3.0], 0, &mut mods));
+    assert_eq!(g.page, Page::Options(2));
+    assert_eq!(mods[2].enabled, before);
+    // The bar on a card still switches it.
+    let mut g = gui(View::Menu);
+    frame(&mut g, SIZE, [0.0, 0.0], &mods, "grid");
+    assert!(g.mouse_pressed(centre_of(&g, Target::Toggle(2)), 0, &mut mods));
+    assert_eq!(mods[2].enabled, !before);
+    assert_eq!(g.page, Page::Grid);
+}
+
+/// Opens module `id`'s options and scrolls until `target` (found by `find`) is drawn.
+fn options_until(
+    g: &mut Gui,
+    mods: &mut [Module],
+    id: Id,
+    name: &str,
+    find: impl Fn(&Target) -> bool,
+) -> Target {
+    let i = mods.iter().position(|m| m.id == id).unwrap();
+    g.open_options(i);
+    g.opened = Instant::now() - Duration::from_secs(1);
+    for _ in 0..30 {
+        frame(g, SIZE, [0.0, 0.0], mods, name);
+        // Found, and not cut by the bottom of the scrolling area.
+        if let Some((_, t)) = g.hits.iter().find(|(r, t)| find(t) && r[3] >= 9.0) {
+            return *t;
+        }
+        let c = [g.content[0] + 4.0, g.content[1] + 4.0];
+        g.scroll(c, -1.0, mods);
+    }
+    panic!("not drawn");
+}
+
+#[test]
+fn choices_switch_keystrokes_modes() {
+    let mut mods = all_on();
+    let ks = mods.iter().position(|m| m.id == Id::Keystrokes).unwrap();
+    let mode = mods[ks]
+        .settings
+        .iter()
+        .position(|s| s.key() == "mode")
+        .unwrap();
+    let mut g = gui(View::Menu);
+    let t = options_until(
+        &mut g,
+        &mut mods,
+        Id::Keystrokes,
+        "options-keystrokes",
+        |t| {
+            *t == Target::Choice {
+                module: ks,
+                setting: mode,
+                option: 2,
+            }
+        },
+    );
+    assert!(g.mouse_pressed(centre_of(&g, t), 0, &mut mods));
+    assert_eq!(mods[ks].choice("mode"), modules::MODE_CONTROLLER);
+    frame(&mut g, SIZE, [0.0, 0.0], &mods, "options-keystrokes");
+}
+
+#[test]
+fn keybind_rows_show_the_bound_key() {
+    let mut mods = all_on();
+    let mut g = gui(View::Menu);
+    options_until(
+        &mut g,
+        &mut mods,
+        Id::ToggleSprint,
+        "options-sprint",
+        |_| true,
+    );
+    let r = frame(&mut g, SIZE, [0.0, 0.0], &mods, "options-sprint");
+    assert!(r.texts.iter().any(|(t, _)| t == "V"));
+    assert!(r.texts.iter().any(|(t, _)| t == "Toggle key"));
+    options_until(&mut g, &mut mods, Id::ToggleSneak, "options-sneak", |_| {
+        true
+    });
+    let r = frame(&mut g, SIZE, [0.0, 0.0], &mods, "options-sneak");
+    assert!(r.texts.iter().any(|(t, _)| t == "Not bound"));
+}
+
+#[test]
+fn keystrokes_previews_in_every_mode() {
+    let mut mods = modules::defaults();
+    let ks = mods.iter().position(|m| m.id == Id::Keystrokes).unwrap();
+    mods[ks].enabled = true;
+    mods[ks].place = Some(Place { x: 0.05, y: 0.05 });
+    let mode = mods[ks]
+        .settings
+        .iter()
+        .position(|s| s.key() == "mode")
+        .unwrap();
+    let d = data();
+    let mut sizes = Vec::new();
+    for (n, name) in ["keys-wasd", "keys-keyboard", "keys-controller"]
+        .iter()
+        .enumerate()
+    {
+        if let crate::settings::Setting::Choice { value, .. } = &mut mods[ks].settings[mode] {
+            *value = n;
+        }
+        let mut r = Recorder::new([360.0, 200.0]);
+        let m = &mods[ks];
+        let content = crate::hud::content(m, &d).unwrap();
+        let unscaled = crate::hud::measure(m, &content, &|s| r.text_width(s));
+        crate::hud::draw(&mut r, m, &content, [10.0, 10.0], 1.0, &d);
+        sizes.push(unscaled);
+        r.write(name);
+        // Every mode draws something, and the keyboard lights W.
+        assert!(!r.texts.is_empty());
+    }
+    // The keyboard map is wider than WASD; the controller sits between.
+    assert!(sizes[1][0] > sizes[2][0] && sizes[2][0] > sizes[0][0]);
 }

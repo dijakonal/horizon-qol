@@ -1,13 +1,14 @@
 //! Module settings and the config file they are saved in.
 //!
 //! A module's settings are a list of [`Setting`]s, which the options page draws as switches,
-//! sliders and colour swatches. The config file is plain `key=value` lines in the game's
-//! `config/horizon_qol/settings.txt`, so it can be read and fixed by hand.
+//! sliders, colour swatches, choice buttons, keybind rows and section headings. The config file
+//! is plain `key=value` lines in the game's `config/horizon_qol/settings.txt`, so it can be read
+//! and fixed by hand.
 
 /// The colours a colour setting can take, as opaque ARGB: the swatches the options page shows.
-pub const PALETTE: [u32; 12] = [
-    0xFFFFFFFF, 0xFFB4B4BE, 0xFF4F8CFF, 0xFF38BDF8, 0xFF2DD4BF, 0xFF22C55E, 0xFFA3E635, 0xFFFACC15,
-    0xFFFB923C, 0xFFEF4444, 0xFFEC4899, 0xFFA855F7,
+pub const PALETTE: [u32; 16] = [
+    0xFFFFFFFF, 0xFFB4B4BE, 0xFF5C5C68, 0xFF000000, 0xFF4F8CFF, 0xFF38BDF8, 0xFF2DD4BF, 0xFF22C55E,
+    0xFFA3E635, 0xFFFACC15, 0xFFFB923C, 0xFFEF4444, 0xFFEC4899, 0xFFA855F7, 0xFF6366F1, 0xFF8B5A2B,
 ];
 
 /// One setting of a module.
@@ -36,6 +37,22 @@ pub enum Setting {
         value: u32,
         default: u32,
     },
+    /// One of a few named options, shown as a row of buttons.
+    Choice {
+        key: &'static str,
+        label: &'static str,
+        value: usize,
+        default: usize,
+        options: &'static [&'static str],
+    },
+    /// The key a Controls mapping of this mod is bound to: shown, changed in Controls.
+    Bind {
+        /// The mapping's id.
+        mapping: &'static str,
+        label: &'static str,
+    },
+    /// A heading above the settings that follow.
+    Heading { label: &'static str },
 }
 
 impl Setting {
@@ -76,9 +93,38 @@ impl Setting {
         }
     }
 
+    pub const fn choice(
+        key: &'static str,
+        label: &'static str,
+        default: usize,
+        options: &'static [&'static str],
+    ) -> Self {
+        Self::Choice {
+            key,
+            label,
+            value: default,
+            default,
+            options,
+        }
+    }
+
+    pub const fn bind(mapping: &'static str, label: &'static str) -> Self {
+        Self::Bind { mapping, label }
+    }
+
+    pub const fn heading(label: &'static str) -> Self {
+        Self::Heading { label }
+    }
+
+    /// The key the config file names it by; empty for a setting that isn't saved (a keybind,
+    /// which Controls keeps, or a heading).
     pub fn key(&self) -> &'static str {
         match self {
-            Self::Toggle { key, .. } | Self::Slider { key, .. } | Self::Colour { key, .. } => key,
+            Self::Toggle { key, .. }
+            | Self::Slider { key, .. }
+            | Self::Colour { key, .. }
+            | Self::Choice { key, .. } => key,
+            Self::Bind { .. } | Self::Heading { .. } => "",
         }
     }
 
@@ -86,7 +132,10 @@ impl Setting {
         match self {
             Self::Toggle { label, .. }
             | Self::Slider { label, .. }
-            | Self::Colour { label, .. } => label,
+            | Self::Colour { label, .. }
+            | Self::Choice { label, .. }
+            | Self::Bind { label, .. }
+            | Self::Heading { label } => label,
         }
     }
 
@@ -95,6 +144,8 @@ impl Setting {
             Self::Toggle { value, default, .. } => *value = *default,
             Self::Slider { value, default, .. } => *value = *default,
             Self::Colour { value, default, .. } => *value = *default,
+            Self::Choice { value, default, .. } => *value = *default,
+            Self::Bind { .. } | Self::Heading { .. } => {}
         }
     }
 
@@ -113,12 +164,14 @@ impl Setting {
         }
     }
 
-    /// The value as the config file writes it.
+    /// The value as the config file writes it; empty for a setting that isn't saved.
     pub fn write(&self) -> String {
         match self {
             Self::Toggle { value, .. } => value.to_string(),
             Self::Slider { value, .. } => format!("{value}"),
             Self::Colour { value, .. } => format!("#{value:08X}"),
+            Self::Choice { value, options, .. } => options[*value].to_lowercase().replace(' ', "_"),
+            Self::Bind { .. } | Self::Heading { .. } => String::new(),
         }
     }
 
@@ -144,6 +197,15 @@ impl Setting {
                     *value = v | 0xFF00_0000;
                 }
             }
+            Self::Choice { value, options, .. } => {
+                if let Some(i) = options
+                    .iter()
+                    .position(|o| o.to_lowercase().replace(' ', "_") == text)
+                {
+                    *value = i;
+                }
+            }
+            Self::Bind { .. } | Self::Heading { .. } => {}
         }
     }
 
@@ -172,7 +234,9 @@ impl Setting {
 
 /// Reads one setting of a list by key.
 pub fn find<'a>(settings: &'a [Setting], key: &str) -> Option<&'a Setting> {
-    settings.iter().find(|s| s.key() == key)
+    settings
+        .iter()
+        .find(|s| !s.key().is_empty() && s.key() == key)
 }
 
 pub fn get_bool(settings: &[Setting], key: &str) -> bool {
@@ -193,6 +257,13 @@ pub fn get_colour(settings: &[Setting], key: &str) -> u32 {
     match find(settings, key) {
         Some(Setting::Colour { value, .. }) => *value,
         _ => 0xFFFFFFFF,
+    }
+}
+
+pub fn get_choice(settings: &[Setting], key: &str) -> usize {
+    match find(settings, key) {
+        Some(Setting::Choice { value, .. }) => *value,
+        _ => 0,
     }
 }
 
@@ -218,14 +289,18 @@ mod tests {
             Setting::toggle("bg", "Background", true),
             Setting::slider("scale", "Scale", 1.0, [0.5, 2.5, 0.1], "{}x"),
             Setting::colour("colour", "Text colour", 0xFFFFFFFF),
+            Setting::choice("mode", "Mode", 0, &["WASD", "Full keyboard", "Controller"]),
         ];
         s[0].read("false");
         s[1].read("1.73");
         s[2].read("#FF4F8CFF");
+        s[3].read("full_keyboard");
         assert!(!get_bool(&s, "bg"));
         assert!((get_f32(&s, "scale") - 1.7).abs() < 1e-4);
         assert_eq!(get_colour(&s, "colour"), 0xFF4F8CFF);
+        assert_eq!(get_choice(&s, "mode"), 1);
         let written: Vec<_> = s.iter().map(Setting::write).collect();
+        assert_eq!(written[3], "full_keyboard");
         let mut again = s.clone();
         for (setting, text) in again.iter_mut().zip(&written) {
             setting.reset();
@@ -238,6 +313,8 @@ mod tests {
         assert!((get_f32(&s, "scale") - 2.5).abs() < 1e-4);
         s[0].read("maybe");
         assert!(!get_bool(&s, "bg"));
+        s[3].read("joystick");
+        assert_eq!(get_choice(&s, "mode"), 1);
         assert_eq!(s[1].slider_text(), "2.5x");
     }
 

@@ -73,6 +73,12 @@ enum Target {
     ClearSearch,
     /// Setting `setting` of module `module`: a switch, or a slider's track.
     Setting { module: usize, setting: usize },
+    /// Option `option` of choice setting `setting`.
+    Choice {
+        module: usize,
+        setting: usize,
+        option: usize,
+    },
     /// Swatch `swatch` of colour setting `setting`.
     Swatch {
         module: usize,
@@ -153,6 +159,8 @@ pub struct Gui {
     elements: Vec<(usize, [f32; 4])>,
     /// Something changed that the config file should keep.
     pub dirty: bool,
+    /// The key each of the mod's Controls mappings is bound to, by mapping id, as shown.
+    pub binds: Vec<(&'static str, String)>,
 }
 
 impl Gui {
@@ -173,6 +181,7 @@ impl Gui {
             screen: [0.0; 2],
             elements: Vec::new(),
             dirty: false,
+            binds: Vec::new(),
         }
     }
 
@@ -514,13 +523,13 @@ impl Gui {
                 continue;
             };
             let scale = m.f32("scale");
-            let unscaled = hud::size(&content, &|s| p.draw.text_width(s));
+            let unscaled = hud::measure(m, &content, &|s| p.draw.text_width(s));
             let r = hud::rect(place, scale, unscaled, size);
             self.elements.push((i, r));
             if !editing {
                 continue;
             }
-            hud::draw(p.draw, m, &content, [r[0], r[1]], scale);
+            hud::draw(p.draw, m, &content, [r[0], r[1]], scale, &sample);
             let dragging = matches!(
                 self.drag,
                 Some(Drag::Element { module, .. } | Drag::Resize { module, .. }) if module == i
@@ -798,6 +807,8 @@ impl Gui {
             let m = &modules[i];
             let bar = [x + 5.0, y + CARD_H - 19.0, cw - 10.0 - 17.0, 14.0];
             let opts = [bar[0] + bar[2] + 3.0, bar[1], 14.0, 14.0];
+            // The whole card opens its settings; the bar on it switches it on and off.
+            self.hit(card, Target::Options(i));
             let hot = hover(Target::Toggle(i)) || hover(Target::Options(i));
             p.rounded(card, if hot { theme::CARD_HOVER } else { theme::CARD });
             if m.enabled {
@@ -882,10 +893,12 @@ impl Gui {
             [switch_at[0] - 4.0, switch_at[1] - 4.0, 30.0, 18.0],
             Target::Toggle(i),
         );
-        let desc = p.fit(m.description, aw);
-        p.text(&desc, [ax, top + 54.0], theme::TEXT_DIM);
+        let desc = p.wrap(m.description, aw, 2);
+        for (n, line) in desc.iter().enumerate() {
+            p.text(line, [ax, top + 54.0 + n as f32 * 10.0], theme::TEXT_DIM);
+        }
 
-        let mut y = top + 70.0;
+        let mut y = top + 60.0 + desc.len() as f32 * 10.0;
         if m.settings.is_empty() {
             p.text(
                 "This module has no settings.",
@@ -895,6 +908,13 @@ impl Gui {
             y += 20.0;
         }
         for (s, setting) in m.settings.iter().enumerate() {
+            if let Setting::Heading { label } = setting {
+                y += 4.0;
+                p.text(&label.to_uppercase(), [ax + 2.0, y + 2.0], theme::ACCENT);
+                p.fill([ax + 2.0, y + 12.0, aw - 4.0, 1.0], theme::BORDER);
+                y += 17.0;
+                continue;
+            }
             let row = [ax, y, aw, ROW_H];
             let target = Target::Setting {
                 module: i,
@@ -944,10 +964,62 @@ impl Gui {
                     );
                     self.hit([tx - 4.0, row[1], track_w + 8.0, ROW_H], target);
                 }
+                Setting::Choice { value, options, .. } => {
+                    // A row of buttons, the chosen one lit, right-aligned.
+                    let widths: Vec<f32> = options.iter().map(|o| p.width(o) + 10.0).collect();
+                    let total: f32 = widths.iter().sum::<f32>() + 2.0 * (options.len() - 1) as f32;
+                    let mut bx = row[0] + row[2] - 6.0 - total;
+                    for (k, (option, w)) in options.iter().zip(&widths).enumerate() {
+                        let r = [bx, row[1] + 4.0, *w, ROW_H - 8.0];
+                        let t = Target::Choice {
+                            module: i,
+                            setting: s,
+                            option: k,
+                        };
+                        let chosen = k == *value;
+                        p.button(r, option, hover(t), chosen);
+                        self.hit(r, t);
+                        bx += w + 2.0;
+                    }
+                }
+                Setting::Bind { mapping, .. } => {
+                    let key = self
+                        .binds
+                        .iter()
+                        .find(|(id, _)| id == mapping)
+                        .map_or("Not bound", |(_, k)| k.as_str())
+                        .to_owned();
+                    let kw = p.width(&key) + 12.0;
+                    let chip = [row[0] + row[2] - 6.0 - kw, row[1] + 4.0, kw, ROW_H - 8.0];
+                    p.rounded(chip, theme::BORDER);
+                    p.rounded(
+                        [chip[0] + 1.0, chip[1] + 1.0, chip[2] - 2.0, chip[3] - 2.0],
+                        theme::SEARCH,
+                    );
+                    let unbound = key == "Not bound";
+                    p.text_centred(
+                        &key,
+                        chip[0],
+                        chip[2],
+                        chip[1] + 3.0,
+                        if unbound {
+                            theme::TEXT_DIM
+                        } else {
+                            theme::TEXT
+                        },
+                    );
+                    let hint = "Change in Options > Controls";
+                    let hw = p.width(hint);
+                    let label_end = row[0] + 8.0 + p.width(setting.label()) + 8.0;
+                    if chip[0] - 8.0 - hw > label_end {
+                        p.text(hint, [chip[0] - 8.0 - hw, label_y], theme::TEXT_FAINT);
+                    }
+                }
+                Setting::Heading { .. } => {}
                 Setting::Colour { value, .. } => {
                     let n = PALETTE.len();
-                    let sw = 10.0;
-                    let gap = 3.0;
+                    let sw = 9.0;
+                    let gap = 2.0;
                     let total = n as f32 * (sw + gap) - gap;
                     let mut sx = row[0] + row[2] - 8.0 - total;
                     for (k, colour) in PALETTE.iter().enumerate() {
@@ -1047,8 +1119,19 @@ impl Gui {
                     });
                     self.slide(at, modules);
                 }
-                Setting::Colour { .. } => {}
+                Setting::Colour { .. } | Setting::Bind { .. } | Setting::Heading { .. } => {}
+                Setting::Choice { .. } => {}
             },
+            Target::Choice {
+                module,
+                setting,
+                option,
+            } => {
+                if let Setting::Choice { value, .. } = &mut modules[module].settings[setting] {
+                    *value = option;
+                    self.dirty = true;
+                }
+            }
             Target::Swatch {
                 module,
                 setting,

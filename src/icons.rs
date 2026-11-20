@@ -14,6 +14,10 @@ pub enum Icon {
     Gear,
     Search,
     Back,
+    PadCross,
+    PadCircle,
+    PadSquare,
+    PadTriangle,
 }
 
 /// The bitmap of `icon`, rows top to bottom.
@@ -136,6 +140,21 @@ pub fn bitmap(icon: Icon) -> &'static [&'static str] {
             "..##....##..",
             ".##....##...",
         ],
+        // Two chevrons, down.
+        Icon::Module(Id::ToggleSneak) => &[
+            "#.........#",
+            ".#.......#.",
+            "..#.....#..",
+            "...#...#...",
+            "....#.#....",
+            ".....#.....",
+            "#.........#",
+            ".#.......#.",
+            "..#.....#..",
+            "...#...#...",
+            "....#.#....",
+            ".....#.....",
+        ],
         // A magnifying glass.
         Icon::Module(Id::Zoom) => &[
             "..####......",
@@ -177,6 +196,34 @@ pub fn bitmap(icon: Icon) -> &'static [&'static str] {
             ".####..", //
             "....##.", //
             ".....##",
+        ],
+        Icon::PadCross => &[
+            "#...#", //
+            ".#.#.", //
+            "..#..", //
+            ".#.#.", //
+            "#...#",
+        ],
+        Icon::PadCircle => &[
+            ".###.", //
+            "#...#", //
+            "#...#", //
+            "#...#", //
+            ".###.",
+        ],
+        Icon::PadSquare => &[
+            "#####", //
+            "#...#", //
+            "#...#", //
+            "#...#", //
+            "#####",
+        ],
+        Icon::PadTriangle => &[
+            "..#..", //
+            ".#.#.", //
+            ".#.#.", //
+            "#...#", //
+            "#####",
         ],
         Icon::Back => &[
             "...#...", //
@@ -250,7 +297,16 @@ mod tests {
     #[test]
     fn every_module_has_an_icon_with_even_rows() {
         let mut icons: Vec<Icon> = defaults().iter().map(|m| Icon::Module(m.id)).collect();
-        icons.extend([Icon::Logo, Icon::Gear, Icon::Search, Icon::Back]);
+        icons.extend([
+            Icon::Logo,
+            Icon::Gear,
+            Icon::Search,
+            Icon::Back,
+            Icon::PadCross,
+            Icon::PadCircle,
+            Icon::PadSquare,
+            Icon::PadTriangle,
+        ]);
         for icon in icons {
             let rows = bitmap(icon);
             assert!(!rows.is_empty());

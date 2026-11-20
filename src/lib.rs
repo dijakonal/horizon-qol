@@ -22,18 +22,23 @@ use mod_api::{
     ScreenTransparentBackgroundEvent, Text, Zoom, ZoomEvent,
 };
 use modules::{Id, Module};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 /// The mod's id, as in `horizon-mod.toml`. It names the mod's screen and its key mappings.
 const ID: &str = "horizon_qol";
 /// The key mapping that opens and closes the screen.
-const OPEN_MENU: &str = "open_menu";
+const OPEN_MENU: &str = modules::MAP_OPEN_MENU;
 const DEFAULT_KEY: &str = "key.keyboard.right.shift";
 /// The key mapping held to zoom.
-const ZOOM: &str = "zoom";
+const ZOOM: &str = modules::MAP_ZOOM;
 const ZOOM_KEY: &str = "key.keyboard.c";
+/// The keys that switch Toggle Sprint and Toggle Sneak; sneak starts unbound.
+const SPRINT_KEY: &str = "key.keyboard.v";
+const SNEAK_KEY: &str = "key.keyboard.unknown";
+/// How long a let-go key takes to fade out in Keystrokes, in milliseconds.
+const FADE_MS: f32 = 160.0;
 /// The config file, under the game's `config/` folder.
 const CONFIG: &str = "horizon_qol/settings.txt";
 
@@ -55,8 +60,19 @@ struct State {
     last_position: Option<[f64; 3]>,
     /// Toggle Sprint holds the sprint key.
     sprint_held: bool,
-    /// The zoom while the zoom key is held, after scrolling; None when not zooming.
+    /// Toggle Sprint's key has switched sprinting on.
+    sprint_toggled: bool,
+    /// Toggle Sneak holds the sneak key, and its key has switched sneaking on.
+    sneak_held: bool,
+    sneak_toggled: bool,
+    /// The zoom key, in Toggle mode, has switched zoom on.
+    zoom_toggled: bool,
+    /// The zoom while zooming, after scrolling; None when not zooming.
     zoom: Option<f32>,
+    /// When each key Keystrokes shows was last down, for its fade.
+    last_down: HashMap<&'static str, u64>,
+    /// The view's yaw and pitch at the last tick, for the controller's right stick.
+    last_rotation: Option<[f32; 2]>,
 }
 
 impl State {
@@ -95,7 +111,13 @@ impl HorizonQol {
             clicks: VecDeque::new(),
             last_position: None,
             sprint_held: false,
+            sprint_toggled: false,
+            sneak_held: false,
+            sneak_toggled: false,
+            zoom_toggled: false,
             zoom: None,
+            last_down: HashMap::new(),
+            last_rotation: None,
         });
         guard
     }
@@ -161,21 +183,44 @@ fn flow(handled: bool) -> Flow {
     }
 }
 
-fn load_config(host: &dyn ClientHost, modules: &mut [Module]) {
+/// The config line that keeps Toggle Sprint on across restarts, when its setting asks.
+const SPRINT_STATE: &str = "toggle_sprint.toggled";
+
+fn load_config(host: &dyn ClientHost, state: &mut State) {
     let Ok(path) = ConfigPath::new(CONFIG) else {
         return;
     };
     if let Ok(bytes) = host.config_files().read(&path) {
-        modules::load(modules, &String::from_utf8_lossy(&bytes));
+        let text = String::from_utf8_lossy(&bytes);
+        modules::load(&mut state.modules, &text);
+        state.sprint_toggled = state.module(Id::ToggleSprint).bool("remember")
+            && settings::parse(&text)
+                .iter()
+                .any(|(k, v)| k == SPRINT_STATE && v == "true");
     }
 }
 
-fn save_config(host: &dyn ClientHost, modules: &[Module]) {
+fn save_config(host: &dyn ClientHost, state: &State) {
     if let Ok(path) = ConfigPath::new(CONFIG) {
-        let _ = host
-            .config_files()
-            .write(&path, modules::save(modules).as_bytes());
+        let mut text = modules::save(&state.modules);
+        text += &format!("{SPRINT_STATE}={}\n", state.sprint_toggled);
+        let _ = host.config_files().write(&path, text.as_bytes());
     }
+}
+
+/// The key each of the mod's Controls mappings is bound to, as the menu shows it.
+fn binds(host: &dyn ClientHost) -> Vec<(&'static str, String)> {
+    [OPEN_MENU, ZOOM, modules::MAP_SPRINT, modules::MAP_SNEAK]
+        .into_iter()
+        .map(|id| {
+            let key = host.mod_key(ID, id).map(|(k, _)| k);
+            let label = match key.as_deref() {
+                None | Some("key.keyboard.unknown") => "Not bound".to_owned(),
+                Some(k) => key_label(k),
+            };
+            (id, label)
+        })
+        .collect()
 }
 
 fn unix_seconds() -> u64 {
@@ -277,17 +322,53 @@ fn read_frame(host: &dyn ClientHost, state: &mut State) {
     }
     state.data.cps_left = state.clicks.iter().filter(|(_, l)| *l).count() as u32;
     state.data.cps_right = state.clicks.len() as u32 - state.data.cps_left;
-    let down = |name: &str| host.mapping(name).ok().flatten().is_some_and(|m| m.down);
-    state.data.keys = hud::Keys {
-        forward: down("key.forward"),
-        left: down("key.left"),
-        back: down("key.back"),
-        right: down("key.right"),
-        jump: down("key.jump"),
-        attack: down("key.attack"),
-        use_item: down("key.use"),
-    };
     state.data.unix_seconds = unix_seconds();
+    state.data.now_ms = now;
+
+    // Keystrokes: which keys are down, and how far a let-go key has faded.
+    let keys = state.module(Id::Keystrokes);
+    if !keys.enabled && state.gui.is_none() {
+        return;
+    }
+    let fades = keys.bool("fade");
+    let keyboard = keys.choice("mode") == modules::MODE_KEYBOARD;
+    let mapping_down = |name: &str| host.mapping(name).ok().flatten().is_some_and(|m| m.down);
+    let mut glow = HashMap::new();
+    let last_down = &mut state.last_down;
+    let mut light = |name: &'static str, down: bool| {
+        if down {
+            last_down.insert(name, now);
+        }
+        let g = if down {
+            1.0
+        } else if fades {
+            last_down
+                .get(name)
+                .map_or(0.0, |t| 1.0 - now.saturating_sub(*t) as f32 / FADE_MS)
+        } else {
+            0.0
+        };
+        if g > 0.0 {
+            glow.insert(name, g.min(1.0));
+        }
+    };
+    for &name in hud::MAPPINGS {
+        light(name, mapping_down(name));
+    }
+    if keyboard {
+        for name in hud::keyboard_keys() {
+            light(name, host.is_key_down(name));
+        }
+    }
+    let axis =
+        |plus: &str, minus: &str| (mapping_down(plus) as i32 - mapping_down(minus) as i32) as f32;
+    let dir = [
+        axis("key.right", "key.left"),
+        axis("key.forward", "key.back"),
+    ];
+    let len = (dir[0] * dir[0] + dir[1] * dir[1]).sqrt().max(1.0);
+    state.data.move_dir = [dir[0] / len, dir[1] / len];
+    state.data.glow = glow;
 }
 
 #[mod_api::horizon_mod]
@@ -301,6 +382,16 @@ impl Hooks for HorizonQol {
         r.register_key_mapping(
             KeyRegistration::new(ZOOM, ZOOM_KEY)
                 .label("key.horizon_qol.zoom")
+                .context(KeyConflictContext::InGame),
+        );
+        r.register_key_mapping(
+            KeyRegistration::new(modules::MAP_SPRINT, SPRINT_KEY)
+                .label("key.horizon_qol.toggle_sprint")
+                .context(KeyConflictContext::InGame),
+        );
+        r.register_key_mapping(
+            KeyRegistration::new(modules::MAP_SNEAK, SNEAK_KEY)
+                .label("key.horizon_qol.toggle_sneak")
                 .context(KeyConflictContext::InGame),
         );
     }
@@ -332,20 +423,72 @@ impl Hooks for HorizonQol {
         };
         if !state.loaded {
             state.loaded = true;
-            load_config(host, &mut state.modules);
+            load_config(host, state);
         }
         read_player(host, state);
 
-        // Toggle Sprint holds the sprint key while it is on, as the player holding it would. With
-        // the game's own toggle-sprint option on, a hold flips sprinting, so it leaves the key be.
-        let sprint =
-            state.on(Id::ToggleSprint) && host.playing() && !host.input_options().toggle_sprint;
-        if sprint {
-            let _ = host.set_mapping_down("key.sprint", true);
-            state.sprint_held = true;
-        } else if state.sprint_held {
-            let _ = host.set_mapping_down("key.sprint", false);
-            state.sprint_held = false;
+        // The toggle keys: each press switches its module's state.
+        let mut flip = |id: &str| {
+            let mut n = 0;
+            while host.consume_click(ID, id) {
+                n += 1;
+            }
+            n % 2 == 1
+        };
+        let (sprint_key, sneak_key, zoom_key) = (
+            flip(modules::MAP_SPRINT),
+            flip(modules::MAP_SNEAK),
+            flip(ZOOM),
+        );
+        if sprint_key && state.on(Id::ToggleSprint) {
+            state.sprint_toggled = !state.sprint_toggled;
+        }
+        if sneak_key && state.on(Id::ToggleSneak) {
+            state.sneak_toggled = !state.sneak_toggled;
+        }
+        if zoom_key && state.module(Id::Zoom).choice("key_mode") == 1 {
+            state.zoom_toggled = !state.zoom_toggled;
+        }
+        if !state.on(Id::ToggleSprint) {
+            state.sprint_toggled = false;
+        }
+        if !state.on(Id::ToggleSneak) {
+            state.sneak_toggled = false;
+        }
+        state.data.sprint_toggled = state.sprint_toggled;
+        state.data.sneak_toggled = state.sneak_toggled;
+
+        // While toggled on, hold the key as the player holding it would. With the game's own
+        // toggle option for that key on, a hold flips it instead, so the key is left alone.
+        let options = host.input_options();
+        let playing = host.playing();
+        let hold = |host: &mut dyn ClientHost, key: &str, want: bool, held: &mut bool| {
+            if want {
+                let _ = host.set_mapping_down(key, true);
+                *held = true;
+            } else if *held {
+                let _ = host.set_mapping_down(key, false);
+                *held = false;
+            }
+        };
+        let sprint = state.sprint_toggled && playing && !options.toggle_sprint;
+        hold(host, "key.sprint", sprint, &mut state.sprint_held);
+        let sneak = state.sneak_toggled && playing && !options.toggle_crouch;
+        hold(host, "key.sneak", sneak, &mut state.sneak_held);
+
+        // The controller's right stick: how fast the view turned this tick.
+        let player = host.local_player();
+        let shared: &dyn Host = host;
+        if let Some(player) = player
+            && let Some([yaw, pitch]) = player.entity().rotation(shared)
+        {
+            if let Some([ly, lp]) = state.last_rotation {
+                let dy = (yaw - ly + 540.0).rem_euclid(360.0) - 180.0;
+                let dp = pitch - lp;
+                let k = |d: f32| (d / 12.0).clamp(-1.0, 1.0);
+                state.data.look = [k(dy), k(dp)];
+            }
+            state.last_rotation = Some([yaw, pitch]);
         }
     }
 
@@ -393,9 +536,16 @@ impl Hooks for HorizonQol {
                 continue;
             };
             let scale = m.f32("scale");
-            let unscaled = hud::size(&content, &|s| event.batch.text_width(s));
+            let unscaled = hud::measure(m, &content, &|s| event.batch.text_width(s));
             let r = hud::rect(place, scale, unscaled, size);
-            hud::draw(&mut *event.batch, m, &content, [r[0], r[1]], scale);
+            hud::draw(
+                &mut *event.batch,
+                m,
+                &content,
+                [r[0], r[1]],
+                scale,
+                &state.data,
+            );
         }
     }
 
@@ -403,7 +553,12 @@ impl Hooks for HorizonQol {
         let mut guard = self.state();
         let state = guard.as_mut()?;
         let m = state.module(Id::Zoom);
-        if !m.enabled || !host.playing() || !host.is_down(ID, ZOOM) {
+        let held = if m.choice("key_mode") == 1 {
+            state.zoom_toggled
+        } else {
+            host.is_down(ID, ZOOM)
+        };
+        if !m.enabled || !host.playing() || !held {
             state.zoom = None;
             return None;
         }
@@ -439,7 +594,7 @@ impl Hooks for HorizonQol {
         if let Some(state) = self.state().as_mut()
             && state.gui.take().is_some_and(|g| g.dirty)
         {
-            save_config(host, &state.modules);
+            save_config(host, state);
         }
     }
 
@@ -472,6 +627,7 @@ impl Hooks for HorizonQol {
         let size = event.draw.size();
         let mouse = event.screen.mouse;
         let close = key_label(&bound_key(host));
+        let binds = binds(host);
         let mut guard = self.state();
         let Some(state) = guard.as_mut() else {
             return;
@@ -479,6 +635,7 @@ impl Hooks for HorizonQol {
         let gui = state
             .gui
             .get_or_insert_with(|| ui::Gui::new(ui::View::Editor));
+        gui.binds = binds;
         gui.draw(
             &mut *event.draw,
             size,
