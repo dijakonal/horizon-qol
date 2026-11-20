@@ -1,0 +1,16 @@
+id = "horizon_qol"
+name = "Horizon QoL"
+version = "0.1.0"
+description = "Quality-of-life tweaks with a client-style mod menu. Press Right Shift in game to open it."
+authors = ["dijakonal"]
+# A native mod: Rust in src/, compiled by the launcher against the game build [native] pins, beside data/ and assets/.
+api = "0.2"
+# Client only: servers never see this mod, so it works on any server.
+side = "client"
+capabilities = ["registries"]
+
+[native]
+game = "26.3"
+# The Nightly of 2026-11-20. `cargo horizon-mod update` moves the pin to a newer build.
+horizon = "0a875da91dbb0fdcb7ba8c42c11341aa229af51a"
+mixins = "e59da9094f0c2fdda6c627fe9eff22dec6a906f0"
