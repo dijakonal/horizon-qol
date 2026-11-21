@@ -155,6 +155,10 @@ pub const SHULKER_PURPLE: u32 = 0xFF8E6491;
 pub const ENDER_GREEN: u32 = 0xFF1B3833;
 pub const ENDER_EYE: u32 = 0xFF2E8B78;
 
+/// The space a grid leaves under it in its tooltip, before the next line (the game puts the
+/// next line right where an image's space ends, and leaves its own gap above it).
+pub const GRID_GAP: f32 = 4.0;
+
 /// The size of a 27-slot grid in GUI pixels.
 pub fn grid_size() -> [f32; 2] {
     [

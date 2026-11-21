@@ -773,7 +773,7 @@ impl ItemPart for ShulkerTooltip {
         }
         previews::contents(host, event.stack)?;
         let [w, h] = previews::grid_size();
-        Some([w, h + 2.0])
+        Some([w, h + previews::GRID_GAP])
     }
 
     fn tooltip_component_draw(
@@ -790,7 +790,7 @@ impl ItemPart for ShulkerTooltip {
                 .flatten()
                 .unwrap_or(previews::SHULKER_PURPLE)
         });
-        let at = [event.origin[0], event.origin[1] + 2.0];
+        let at = [event.origin[0], event.origin[1]];
         previews::draw_grid(&mut *event.draw, at, &items, tint);
     }
 }
@@ -812,7 +812,7 @@ impl ItemPart for EnderTooltip {
         }
         if seen {
             let [w, h] = previews::grid_size();
-            Some([w, h + 2.0])
+            Some([w, h + previews::GRID_GAP])
         } else {
             let w = host
                 .text_width(&Text::literal(previews::ENDER_UNSEEN))
@@ -827,7 +827,7 @@ impl ItemPart for EnderTooltip {
         event: &mut TooltipComponentDrawEvent<'_>,
     ) {
         let items = previews::with(|s| s.ender_items.clone());
-        let at = [event.origin[0], event.origin[1] + 2.0];
+        let at = [event.origin[0], event.origin[1]];
         match items {
             Some(items) => {
                 let tint = previews::with(|s| s.ender_tint).then_some(previews::ENDER_GREEN);

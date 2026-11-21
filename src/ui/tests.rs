@@ -861,9 +861,23 @@ fn container_preview_grids() {
         .unwrap();
     let shulker = crate::previews::tooltip_colours(yellow);
     let ender = crate::previews::ender_tooltip_colours();
-    tooltip(&mut r, [10.0, 10.0], "Yellow Shulker Box", h + 2.0, shulker);
+    // The name, the game's 2-pixel gap, the grid and its gap, then the F3+H line after it.
+    let gap = crate::previews::GRID_GAP;
+    tooltip(
+        &mut r,
+        [10.0, 10.0],
+        "Yellow Shulker Box",
+        h + gap + 10.0,
+        shulker,
+    );
     crate::previews::draw_grid(&mut r, [10.0, 22.0], &empty, Some(yellow));
-    tooltip(&mut r, [10.0, 110.0], "Ender Chest", h + 2.0, ender);
+    r.text(
+        "minecraft:yellow_shulker_box",
+        [10.0, 22.0 + h + gap],
+        0xFF555555,
+        true,
+    );
+    tooltip(&mut r, [10.0, 110.0], "Ender Chest", h + gap, ender);
     crate::previews::draw_grid(
         &mut r,
         [10.0, 122.0],
