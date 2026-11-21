@@ -41,7 +41,7 @@ pub(in crate::game) fn tick() {
     }
 }
 
-/// Before the frame's skins settle (`update_remote_skins`): the picked skin and cape on the
+/// Just after the frame's skins settle (`update_remote_skins`): the picked skin and cape on the
 /// player's own model, once their pictures are in the atlas.
 pub(in crate::game) fn apply(game: &mut Game<'_>) {
     let look = w::look();

@@ -137,11 +137,10 @@ source = "src/mixins/wardrobe_module.rs"
 
 [[native.mixin]]
 id = "wardrobe_draw"
-target = "horizon_client::game::remote::Game<'_>::update_remote_skins"
-kind = "BEFORE_CALL"
-selector = "self.remote.as_mut"
-require = 2
-ordinal = 1
+# Right after the game settles the frame's skins (update_remote_skins, which can't be patched
+# itself: it declares constants inside), every frame.
+target = "horizon_client::game::remote::Game<'_>::publish_tab_object_skins"
+kind = "HEAD"
 helper = "src/mixins/wardrobe_draw.rs"
 bindings = [
   { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
