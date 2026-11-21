@@ -45,7 +45,7 @@ mod theme {
 const LINE: f32 = 9.0;
 const HEADER_H: f32 = 28.0;
 const FOOTER_H: f32 = 16.0;
-const SIDEBAR_W: f32 = 78.0;
+const SIDEBAR_W: f32 = 88.0;
 const TAB_H: f32 = 18.0;
 const GAP: f32 = 6.0;
 const CARD_MIN_W: f32 = 96.0;
@@ -382,6 +382,13 @@ impl Paint<'_> {
         icons::draw(icon, at, px, argb, &mut |q, c| draw.fill(q, fade(c, k)));
     }
 
+    /// The mod's logo, its top left at `at`, `px` GUI pixels a logo pixel.
+    fn logo(&mut self, at: [f32; 2], px: f32) {
+        let k = self.k;
+        let draw = &mut *self.draw;
+        icons::draw_logo(at, px, k, &mut |r, c| draw.fill(r, c));
+    }
+
     /// A module's icon tile: a rounded square in its colour, lit at the top, with its icon.
     fn icon(&mut self, r: [f32; 4], m: &Module) {
         self.rounded(r, m.colour);
@@ -489,13 +496,13 @@ impl Gui {
             let cx = sw / 2.0;
             let cy = sh / 2.0;
             let title = "HORIZON QOL";
-            // The logo, 24 wide at 2 pixels a bitmap pixel, then a gap, then the title.
+            // The logo, 32 wide at 2 pixels a logo pixel, then a gap, then the title.
             let tw = p.width(title) * 2.0;
-            let total = 24.0 + 6.0 + tw;
+            let total = 32.0 + 8.0 + tw;
             let left = (cx - total / 2.0).floor();
-            p.glyph_at(Icon::Logo, [left + 1.0, cy - 34.0 + 1.0], 2.0, 0x80000000);
-            p.glyph_at(Icon::Logo, [left, cy - 34.0], 2.0, theme::ACCENT);
-            let tx = left + 30.0;
+            p.fill([left + 2.0, cy - 40.0 + 2.0, 32.0, 32.0], 0x60000000);
+            p.logo([left, cy - 40.0], 2.0);
+            let tx = left + 40.0;
             p.text_scaled(title, [tx + 1.0, cy - 34.0 + 1.0], 2.0, 0x80000000);
             p.text_scaled(title, [tx, cy - 34.0], 2.0, theme::TEXT);
             let mods = [cx - 45.0, cy - 10.0, 90.0, 22.0];
@@ -622,13 +629,9 @@ impl Gui {
             theme::HEADER,
         );
         p.fill([px, py + HEADER_H, pw, 1.0], theme::BORDER);
-        let logo = [px + 7.0, py + 5.0, 18.0, 18.0];
-        p.rounded(logo, theme::ACCENT);
-        p.fill(
-            [logo[0] + 2.0, logo[1] + 1.0, logo[2] - 4.0, 1.0],
-            0x40FFFFFF,
-        );
-        p.glyph(Icon::Logo, logo, theme::TEXT);
+        // The logo, one GUI pixel a logo pixel, on a dark rim.
+        p.rounded([px + 7.0, py + 5.0, 18.0, 18.0], 0xFF0A0A10);
+        p.logo([px + 8.0, py + 6.0], 1.0);
         let title_y = py + (HEADER_H - LINE) / 2.0 + 1.0;
         p.text("HORIZON", [px + 31.0, title_y], theme::TEXT);
         let tw = p.width("HORIZON");

@@ -390,7 +390,7 @@ pub fn defaults() -> Vec<Module> {
             Utility,
             0xFF64748B,
             false,
-            Some([0.5, 0.93]),
+            Some([0.5, 0.86]),
             with_default(
                 hud_settings(vec![
                     Setting::bind(MAP_SNEAK, "Toggle key"),

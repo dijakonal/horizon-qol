@@ -1,3 +1,5 @@
+<p align="center"><img src="icon.png" alt="The Horizon QoL logo: a pixel-art sun setting on the sea" width="128"></p>
+
 # Horizon QoL
 
 Quality-of-life tweaks for [Horizon](https://github.com/horizon-rust/horizon), the Rust rewrite of
@@ -14,6 +16,9 @@ Minecraft: Java Edition 26.3, with a client-style mod menu and a HUD editor.
 - **Mods** in the middle opens the mod menu. Click anywhere on a module's card for its settings;
   the ENABLED / DISABLED bar on the card switches it on and off. Search with the box at the top.
   **Edit HUD** goes back to the editor.
+- **Options > Mods > Horizon QoL > Config** opens the same mod menu while you're in a world. On
+  the title screen, where mods can't open their own screens, it shows the one setting Horizon
+  keeps for the mod (the "Loaded" chat line) and a reminder of where the menu is.
 - Right Shift or Esc closes it.
 - Settings are saved when you close the screen, in `config/horizon_qol/settings.txt` in the game
   folder.
@@ -205,6 +210,8 @@ src/hud/pad.rs            the controllers, drawn and shaded from circles and rou
 src/voice/                voice chat: its engine, settings file, Opus codec (opus-rs) and game-side code (mixins)
 src/previews.rs           shulker box and ender chest previews: reading their items, the slot grid, the saved ender chests
 src/ui.rs                 the screen: the HUD editor and the mod menu
+src/mixins/               the mod's own game-side code: the Config button opening its menu
+icon.png                  the logo, drawn from LOGO_ART in src/icons.rs by tools/logo.py
 src/ui/tests.rs           the screen's tests, with a fake draw context that can write SVG previews
 assets/horizon_qol/        the key mappings' names in Options > Controls, and voice chat's textures
 licenses/                 the licences of the code voice chat is built from

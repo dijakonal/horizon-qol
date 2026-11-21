@@ -7,5 +7,7 @@
   "voice_chat.hk_ptt": "Push to Talk",
   "voice_chat.hk_whisper": "Whisper",
   "voice_chat.hk_mute": "Mute Microphone",
-  "voice_chat.hk_disable": "Voice Chat Off / On"
+  "voice_chat.hk_disable": "Voice Chat Off / On",
+  "horizon_qol.setting.chat_message": "Say \"Loaded\" in chat when joining",
+  "horizon_qol.setting.chat_message.tooltip": "Every other setting is in the mod's own menu: press Right Shift in a world, or this Config button while in a world."
 }

@@ -10,7 +10,6 @@ use crate::modules::Id;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Icon {
     Module(Id),
-    Logo,
     Gear,
     Search,
     Back,
@@ -22,6 +21,69 @@ pub enum Icon {
     ArrowDown,
     ArrowLeft,
     ArrowRight,
+}
+
+/// The mod's logo, a sunset on the sea: 16 by 16, one letter a colour ([`LOGO_COLOURS`]), `.`
+/// empty. `icon.png` is drawn from these rows (`tools/logo.py`), so the two stay the same.
+pub const LOGO_ART: [&str; 16] = [
+    ".aaaaaaaaaaaaaa.",
+    "aaaaaaaaaaaaaaaa",
+    "bbbbbbbbbbbbbbbb",
+    "bbbbbbyyyybbbbbb",
+    "ccccyyyyyyyycccc",
+    "cccyyyyyyyyyyccc",
+    "ccyyyyyyyyyyyycc",
+    "dddddddddddddddd",
+    "dooooooooooooood",
+    "dddddddddddddddd",
+    "drrrrrrrrrrrrrrd",
+    "dddddddddddddddd",
+    "wwwwwwwwwwwwwwww",
+    "wwwllllllllllwww",
+    "wwwwwllllllwwwww",
+    ".wwwwwwllwwwwww.",
+];
+
+/// The logo's colours, by letter.
+pub const LOGO_COLOURS: [(u8, u32); 9] = [
+    (b'a', 0xFF2B1055),
+    (b'b', 0xFF6A2C70),
+    (b'c', 0xFFD25D6E),
+    (b'd', 0xFFF08A5D),
+    (b'y', 0xFFFFD95A),
+    (b'o', 0xFFFF9A3C),
+    (b'r', 0xFFF25F5C),
+    (b'w', 0xFF1B2A4A),
+    (b'l', 0xFFFF9A3C),
+];
+
+/// Draws the logo with its top left at `at`, `px` GUI pixels a logo pixel, through `fill`, its
+/// colours' alpha times `alpha`.
+pub fn draw_logo(at: [f32; 2], px: f32, alpha: f32, fill: &mut dyn FnMut([f32; 4], u32)) {
+    for (y, row) in LOGO_ART.iter().enumerate() {
+        let bytes = row.as_bytes();
+        let mut x = 0;
+        while x < bytes.len() {
+            let kind = bytes[x];
+            let mut end = x + 1;
+            while end < bytes.len() && bytes[end] == kind {
+                end += 1;
+            }
+            if let Some(&(_, c)) = LOGO_COLOURS.iter().find(|(k, _)| *k == kind) {
+                let a = (((c >> 24) as f32) * alpha.clamp(0.0, 1.0)).round() as u32;
+                fill(
+                    [
+                        at[0] + x as f32 * px,
+                        at[1] + y as f32 * px,
+                        (end - x) as f32 * px,
+                        px,
+                    ],
+                    (a << 24) | (c & 0x00FF_FFFF),
+                );
+            }
+            x = end;
+        }
+    }
 }
 
 /// The bitmap of `icon`, rows top to bottom.
@@ -212,17 +274,6 @@ pub fn bitmap(icon: Icon) -> &'static [&'static str] {
             ".......###..",
             "........###.",
         ],
-        // The sun setting on the horizon.
-        Icon::Logo => &[
-            "....####....",
-            "..########..",
-            ".##########.",
-            "############",
-            "............",
-            "############",
-            "............",
-            "..++++++++..",
-        ],
         Icon::Gear => &[
             "..#.#..", //
             ".#####.", //
@@ -372,7 +423,6 @@ mod tests {
     fn every_module_has_an_icon_with_even_rows() {
         let mut icons: Vec<Icon> = defaults().iter().map(|m| Icon::Module(m.id)).collect();
         icons.extend([
-            Icon::Logo,
             Icon::Gear,
             Icon::Search,
             Icon::Back,
@@ -393,6 +443,20 @@ mod tests {
                 "{icon:?} has rows of different widths"
             );
             assert!(rows.iter().any(|r| r.contains('#')));
+        }
+    }
+
+    #[test]
+    fn the_logo_is_square_and_fully_coloured() {
+        assert!(LOGO_ART.iter().all(|r| r.len() == 16));
+        for row in LOGO_ART {
+            for b in row.bytes() {
+                assert!(
+                    b == b'.' || LOGO_COLOURS.iter().any(|(k, _)| *k == b),
+                    "{}",
+                    b as char
+                );
+            }
         }
     }
 

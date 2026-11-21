@@ -36,6 +36,30 @@ use std::sync::{Mutex, MutexGuard};
 
 /// The mod's id, as in `horizon-mod.toml`. It names the mod's screen and its key mappings.
 const ID: &str = "horizon_qol";
+/// The mod's id, for its game-side code (`src/mixins/`).
+pub const MOD_ID: &str = ID;
+
+/// The next time the mod screen opens without the menu key, it opens on the mod menu.
+static OPEN_ON_MENU: AtomicBool = AtomicBool::new(false);
+
+/// The Mods screen's Config button was pressed on this mod (its game-side code calls this just
+/// before opening the mod screen): the screen opens on the mod menu, not the HUD editor.
+pub fn config_button() {
+    OPEN_ON_MENU.store(true, Ordering::Relaxed);
+    voice::screen_taken();
+}
+
+/// A new screen state: on the mod menu after the Config button, else on the HUD editor.
+fn new_gui() -> ui::Gui {
+    if OPEN_ON_MENU.swap(false, Ordering::Relaxed) {
+        ui::Gui::new(ui::View::Menu)
+    } else {
+        ui::Gui::new(ui::View::Editor)
+    }
+}
+
+/// The mod's one setting on its Options > Mods page: the "loaded" line in chat.
+const SETTING_CHAT: &str = "chat_message";
 /// The key mapping that opens and closes the screen.
 const OPEN_MENU: &str = modules::MAP_OPEN_MENU;
 const DEFAULT_KEY: &str = "key.keyboard.right.shift";
@@ -144,9 +168,7 @@ impl HorizonQol {
         }
         let mut guard = self.state();
         let state = guard.as_mut()?;
-        let gui = state
-            .gui
-            .get_or_insert_with(|| ui::Gui::new(ui::View::Editor));
+        let gui = state.gui.get_or_insert_with(new_gui);
         Some(f(gui, &mut state.modules))
     }
 
@@ -156,6 +178,7 @@ impl HorizonQol {
             return false;
         }
         voice::screen_taken();
+        OPEN_ON_MENU.store(false, Ordering::Relaxed);
         if let Some(state) = self.state().as_mut() {
             state.gui = Some(ui::Gui::new(ui::View::Editor));
         }
@@ -553,6 +576,11 @@ impl ItemPart for EnderTooltip {
 #[mod_api::horizon_mod]
 impl Hooks for HorizonQol {
     fn register(&self, r: &mut dyn Registrar, _: &RegistrationContext) {
+        // A setting gives the mod a Config button on Options > Mods, which opens its menu.
+        let _ = r.register_setting(
+            mod_api::SettingSpec::toggle(SETTING_CHAT, "horizon_qol.setting.chat_message", true)
+                .tooltip("horizon_qol.setting.chat_message.tooltip"),
+        );
         voice::register(r);
         // Every shulker box by id: the item tag isn't certain to exist in every version.
         for dye in [
@@ -619,9 +647,11 @@ impl Hooks for HorizonQol {
         }
         if self.greet.load(Ordering::Relaxed) && host.playing() {
             self.greet.store(false, Ordering::Relaxed);
-            let key = key_label(&bound_key(host));
-            let line = format!("[Horizon QoL] Loaded. Press {key} to open the menu.");
-            let _ = host.chat_line(Text::literal(line));
+            if host.setting_bool(SETTING_CHAT).unwrap_or(true) {
+                let key = key_label(&bound_key(host));
+                let line = format!("[Horizon QoL] Loaded. Press {key} to open the menu.");
+                let _ = host.chat_line(Text::literal(line));
+            }
         }
 
         let mut guard = self.state();
@@ -916,9 +946,7 @@ impl Hooks for HorizonQol {
         let Some(state) = guard.as_mut() else {
             return;
         };
-        let gui = state
-            .gui
-            .get_or_insert_with(|| ui::Gui::new(ui::View::Editor));
+        let gui = state.gui.get_or_insert_with(new_gui);
         gui.binds = binds;
         gui.draw(
             &mut *event.draw,
