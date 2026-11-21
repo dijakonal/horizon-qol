@@ -12,6 +12,8 @@ mod icons;
 mod modules;
 mod previews;
 mod profiles;
+/// Recording for Replay Studio, public for its game-side code (`src/voice/mixins/tick.rs`).
+pub mod replay;
 /// The sidebar scoreboard's look, public for its game-side code (`src/mixins/scoreboard.rs`).
 pub mod scoreboard;
 mod settings;
@@ -81,6 +83,7 @@ const ZOOM_KEY: &str = "key.keyboard.c";
 const SPRINT_KEY: &str = "key.keyboard.y";
 const SNEAK_KEY: &str = "key.keyboard.unknown";
 const FREECAM_KEY: &str = "key.keyboard.f6";
+const RECORD_KEY: &str = "key.keyboard.f7";
 /// How long a let-go key takes to fade out in Keystrokes, in milliseconds.
 const FADE_MS: f32 = 160.0;
 /// The config file, under the game's `config/` folder.
@@ -127,6 +130,10 @@ struct State {
     /// The camera while Freecam is on, and the camera type to go back to.
     freecam: Option<freecam::Freecam>,
     camera_before: Option<mod_api::CameraType>,
+    /// The world or server Replay last decided about recording by itself, so it does once a
+    /// visit (stopping it by hand keeps it stopped), and the recording as last seen.
+    replay_session: Option<String>,
+    replay_was: Option<replay::Status>,
     /// The profile in use, by name: changes save to it too.
     active_profile: Option<String>,
     /// The saved profiles: name and file name, by name.
@@ -174,6 +181,8 @@ impl HorizonQol {
             profiles: Vec::new(),
             freecam: None,
             camera_before: None,
+            replay_session: None,
+            replay_was: None,
             zoom_toggled: false,
             zoom: None,
             voice_synced: None,
@@ -309,12 +318,13 @@ fn save_config(host: &dyn ClientHost, state: &State) {
 }
 
 /// The mod's Controls mappings, in the order the menu lists them.
-const MAPPINGS: [&str; 10] = [
+const MAPPINGS: [&str; 11] = [
     OPEN_MENU,
     ZOOM,
     modules::MAP_SPRINT,
     modules::MAP_SNEAK,
     modules::MAP_FREECAM,
+    modules::MAP_RECORD,
     voice::engine::KEY_MENU,
     voice::engine::KEY_PTT,
     voice::engine::KEY_WHISPER,
@@ -1087,6 +1097,82 @@ fn freecam_tick(host: &mut dyn ClientHost, state: &mut State, pressed: bool) {
     }
 }
 
+/// Replay's tick: its key starts and stops a recording, it starts one by itself on joining a
+/// world or server when its setting says so, and says in chat what became of each.
+fn replay_tick(host: &mut dyn ClientHost, state: &mut State, pressed: bool) {
+    let mut said = Vec::new();
+    replay_decide(host, state, pressed, &mut said);
+    if state.module(Id::Replay).bool("say") {
+        for text in said {
+            let _ = host.chat_line(Text::literal(format!("[Replay] {text}")));
+        }
+    }
+}
+
+fn replay_decide(host: &dyn ClientHost, state: &mut State, pressed: bool, said: &mut Vec<String>) {
+    let m = state.module(Id::Replay);
+    let (on, auto) = (m.enabled, m.choice("auto"));
+    let mut say = |text: String| said.push(text);
+    let key = host
+        .mod_key(ID, modules::MAP_RECORD)
+        .map_or_else(|| "its key".to_owned(), |(k, _)| key_label(&k));
+    for o in replay::take_outcomes() {
+        match (o.start, o.ok) {
+            (true, true) => say(format!("Recording. Press {key} to stop and save it.")),
+            (false, true) => say(format!(
+                "Saved {}. Watch it in Options > Horizon Settings > Replay Studio.",
+                o.text
+            )),
+            (start, false) => say(format!(
+                "Couldn't {} the recording: {}",
+                if start { "start" } else { "stop" },
+                o.text
+            )),
+        }
+    }
+    let server = host.client_session().client_server();
+    let place = server
+        .as_ref()
+        .and_then(|s| s.save_folder.clone().or_else(|| s.address.clone()));
+    let in_world = host.local_player().is_some() && place.is_some();
+    if !in_world {
+        // Leaving the world ends its recording, which the game saves.
+        if let Some(was) = state.replay_was.take()
+            && was.active
+        {
+            say(format!("Saved {} as you left.", was.path));
+        }
+        replay::clear_status();
+        state.replay_session = None;
+        state.data.recording = None;
+        return;
+    }
+    let is_server = server.as_ref().is_some_and(|s| s.save_folder.is_none());
+    let place = place.unwrap_or_default();
+    let name = replay::recording_name(&place);
+    let status = replay::status();
+    let active = status.as_ref().is_some_and(|s| s.active);
+    let replaying = status.as_ref().is_some_and(|s| s.replaying);
+    // Once the game has said how recording goes here, decide once whether to start by itself.
+    if on && status.is_some() && !replaying && state.replay_session.as_deref() != Some(&place) {
+        state.replay_session = Some(place.clone());
+        if !active && replay::auto_records(auto, is_server) {
+            replay::start(&name);
+        }
+    }
+    if pressed && on {
+        if replaying {
+            say("A replay is playing: there's nothing new to record.".to_owned());
+        } else if active {
+            replay::stop();
+        } else {
+            replay::start(&name);
+        }
+    }
+    state.data.recording = status.as_ref().filter(|s| s.active).map(|s| s.elapsed_ms);
+    state.replay_was = status;
+}
+
 /// Tells the game-side scoreboard where it goes and how it looks, or that the game draws its
 /// own (the module is off).
 fn scoreboard_look(host: &dyn ClientHost, state: &State) {
@@ -1221,6 +1307,11 @@ impl Hooks for HorizonQol {
                 .label("key.horizon_qol.freecam")
                 .context(KeyConflictContext::InGame),
         );
+        r.register_key_mapping(
+            KeyRegistration::new(modules::MAP_RECORD, RECORD_KEY)
+                .label("key.horizon_qol.record")
+                .context(KeyConflictContext::InGame),
+        );
     }
 
     fn client_tick_pre(&self, host: &mut dyn ClientHost, _: &mut ClientTickPreEvent) {
@@ -1324,13 +1415,15 @@ impl Hooks for HorizonQol {
             }
             n % 2 == 1
         };
-        let (sprint_key, sneak_key, zoom_key, freecam_key) = (
+        let (sprint_key, sneak_key, zoom_key, freecam_key, record_key) = (
             flip(modules::MAP_SPRINT),
             flip(modules::MAP_SNEAK),
             flip(ZOOM),
             flip(modules::MAP_FREECAM),
+            flip(modules::MAP_RECORD),
         );
         freecam_tick(host, state, freecam_key);
+        replay_tick(host, state, record_key);
         let toggles = state.module(Id::ToggleSprint);
         let (sprint_on, sneak_on) = (
             toggles.enabled && toggles.bool("sprint"),
@@ -1742,6 +1835,23 @@ impl Hooks for HorizonQol {
             gui.binds = binds;
         }
         // The Voice Chat page's live rows: the connection, the group, the microphone.
+        let replay_status = match replay::status() {
+            Some(s) if s.active => (
+                "replay_status",
+                format!(
+                    "Recording {}, {}",
+                    replay::clock(s.elapsed_ms),
+                    replay::size(s.bytes)
+                ),
+                0xFFEF4444,
+            ),
+            Some(s) if s.replaying => (
+                "replay_status",
+                "A replay is playing".to_owned(),
+                0xFFB4B4BE,
+            ),
+            _ => ("replay_status", "Not recording".to_owned(), 0xFF9090A0),
+        };
         let snap = voice::engine::qol::snapshot();
         let voice_on = state
             .modules
@@ -1762,6 +1872,12 @@ impl Hooks for HorizonQol {
             ("voice_group", group.0, group.1),
             ("hud_note", " ".to_owned(), 0),
             ("freecam_note", " ".to_owned(), 0),
+            replay_status,
+            (
+                "replay_where",
+                "Options > Horizon Settings > Replay Studio".to_owned(),
+                0xFFB4B4BE,
+            ),
         ];
         gui.meter = voice_on.then_some((snap.level_db, snap.threshold_db));
         gui.draw(

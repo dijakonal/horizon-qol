@@ -15,6 +15,38 @@ fn voicechat_tick(game: &mut crate::game::Game<'_>) {
         game.apply_settings();
         game.settings.save(&crate::game::Game::options_path());
     }
+    // Horizon QoL's Replay module: the recording it asked to start or stop (Horizon's own
+    // `/studio record`), and how the one running goes. A replay playing isn't recorded again.
+    {
+        use mod_horizon_qol::replay as qr;
+        let replaying = game.replay.playing();
+        if let Some(request) = qr::take_request() {
+            let start = request.is_some();
+            let result = match &request {
+                Some(_) if replaying => Err("a replay is playing".to_owned()),
+                Some(name) => game
+                    .start_studio_recording(Some(name.as_str()))
+                    .map_err(|e| e.to_string()),
+                None => game.stop_studio_recording().map_err(|e| e.to_string()),
+            };
+            match result {
+                Ok(v) => {
+                    let ok = v["ok"].as_bool() == Some(true);
+                    let text = if ok { &v["path"] } else { &v["error"] };
+                    qr::push_outcome(start, ok, text.as_str().unwrap_or_default().to_owned());
+                }
+                Err(e) => qr::push_outcome(start, false, e),
+            }
+        }
+        let s = game.studio_recording_status();
+        qr::set_status(
+            s["active"].as_bool() == Some(true),
+            s["elapsed_ms"].as_u64().unwrap_or(0),
+            s["bytes_written"].as_u64().unwrap_or(0),
+            s["path"].as_str().unwrap_or_default().to_owned(),
+            replaying,
+        );
+    }
     use mod_horizon_qol::voice::engine as vc;
     crate::game::remote::voicechat_audio::ensure_installed();
     let Some(r) = game.remote.as_ref() else {

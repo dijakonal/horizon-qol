@@ -45,6 +45,7 @@ pub enum Id {
     Clock,
     Scoreboard,
     Freecam,
+    Replay,
     /// Toggle Sprint & Sneak (its key is Toggle Sprint's, from before the two were one).
     ToggleSprint,
     Zoom,
@@ -71,6 +72,7 @@ impl Id {
             Id::Clock => "clock",
             Id::Scoreboard => "scoreboard",
             Id::Freecam => "freecam",
+            Id::Replay => "replay",
             Id::ToggleSprint => "toggle_sprint",
             Id::Zoom => "zoom",
             Id::ShulkerPreview => "shulker_preview",
@@ -95,6 +97,7 @@ pub const MAP_ZOOM: &str = "zoom";
 pub const MAP_SPRINT: &str = "toggle_sprint";
 pub const MAP_SNEAK: &str = "toggle_sneak";
 pub const MAP_FREECAM: &str = "freecam";
+pub const MAP_RECORD: &str = "record";
 
 /// Where a HUD element sits: its top left as a fraction of the screen, so it keeps its place when
 /// the window or the GUI scale changes. Its size comes from its content times its scale setting.
@@ -522,6 +525,41 @@ pub fn defaults() -> Vec<Module> {
                     "Space and Shift go up and down, Sprint doubles the speed",
                 ),
             ],
+        ),
+        Module::new(
+            Id::Replay,
+            "Replay",
+            "Records what you play, as ReplayMod does, to watch and film again in Horizon's \
+             Replay Studio. Its key (F7) starts and stops a recording; it can start by itself.",
+            Utility,
+            0xFFDC2626,
+            false,
+            Some([0.5, 0.0]),
+            with_default(
+                with_default(
+                    hud_settings(vec![
+                        Setting::heading("Recording"),
+                        Setting::bind(MAP_RECORD, "Record key (start / stop)"),
+                        Setting::choice("auto", "Record by itself", 3, crate::replay::AUTO),
+                        Setting::toggle("say", "Say in chat when it starts and saves", true),
+                        Setting::info("replay_status", "Now"),
+                        Setting::info("replay_where", "Watch and edit in"),
+                        Setting::heading("On the HUD"),
+                        Setting::toggle("indicator", "Show REC while recording", true),
+                        Setting::toggle("blink", "Blink", true),
+                        Setting::toggle("time", "Show how long", true),
+                    ]),
+                    "text_colour",
+                    |s| {
+                        if let Setting::Colour { value, default, .. } = s {
+                            *value = 0xFFEF4444;
+                            *default = 0xFFEF4444;
+                        }
+                    },
+                ),
+                "background",
+                off,
+            ),
         ),
         Module::new(
             Id::ToggleSprint,

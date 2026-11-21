@@ -9,6 +9,7 @@
   "voice_chat.hk_mute": "Mute Microphone",
   "voice_chat.hk_disable": "Voice Chat Off / On",
   "key.horizon_qol.freecam": "Freecam",
+  "key.horizon_qol.record": "Start / Stop Recording",
   "horizon_qol.setting.config_opens": "The Config button opens",
   "horizon_qol.setting.config_opens.editor": "HUD editor",
   "horizon_qol.setting.config_opens.menu": "Mod menu",

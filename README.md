@@ -37,6 +37,7 @@ cancels, Backspace leaves it unbound, a right-click puts back the default).
 | Open Mod Menu | Right Shift | Opens the HUD editor |
 | Zoom | C | Zooms while held, or on and off in Toggle mode |
 | Freecam | F6 | Freecam on or off |
+| Start / Stop Recording | F7 | Starts a recording for Replay Studio, or stops and saves it |
 | Toggle Sprint | Y | Sprinting on or off, while Toggle Sprint & Sneak is on |
 | Toggle Sneak | not bound | Sneaking on or off, while Toggle Sprint & Sneak is on |
 | Voice Chat Menu | V | Opens the Voice Chat page (as Simple Voice Chat's menu key does) |
@@ -66,6 +67,7 @@ cancels, Backspace leaves it unbound, a right-click puts back the default).
 | Toggle Sprint & Sneak | Its keys switch sprinting and sneaking on and off | Each on or off, their keys, status on the HUD, keep sprinting after a restart |
 | Scoreboard | The server's sidebar scoreboard as a HUD element you can move and resize | Score numbers (off to start with), title, text shadow, background colour and opacity, title band |
 | Freecam | Its key (F6) flies the camera away from your player, through blocks; your player stays still | Key, speed, level or where-you-look flight, see your player, clear water and lava fog |
+| Replay | Records what you play for Horizon's Replay Studio, as ReplayMod does | Record key, record by itself (off, servers, single player, everywhere), chat messages, REC on the HUD (blink, time) |
 | Zoom | Zoom in; scroll while zooming to zoom more or less | Key, hold or toggle, zoom amount, smooth, scroll to adjust, slower mouse |
 | HUD | Every HUD element on or off, and their rule for F3 and the chat | When F3 is open, when the chat is open |
 | Voice Chat | Proximity voice chat on servers that run Simple Voice Chat | Talk mode, levels, mute, sounds, keys, its pages |
@@ -133,6 +135,22 @@ the HUD layout and the mod's keys.
 Profiles are files in `config/horizon_qol/profiles/`, in the same `key=value` text.
 
 ![The profiles page](docs/profiles.png)
+
+### Replay
+
+Horizon has ReplayMod's other half built in: its **Replay Studio** (Options > Horizon Settings >
+Replay Studio) lists your recordings and plays them back, with a timeline, a free camera,
+keyframes and camera paths, and the recordings are `.mcpr`, ReplayMod's own format. What it
+lacks is an easy way to record: only the `/studio record` chat command. The **Replay** module
+(Utility tab, off to start with) adds that:
+
+- **F7** starts a recording, and stops and saves it.
+- **Record by itself:** with the module on, a recording starts when you join a server, a single
+  player world, or both (everywhere to start with). Stopping one by hand keeps it stopped until
+  you next join.
+- **REC** on the HUD while it records, with how long (movable like any element), and its status
+  and size on the module's page.
+- Leaving the world saves the recording. They go in `recordings/` in the game folder.
 
 ### F3, the chat and containers
 
@@ -268,6 +286,7 @@ src/previews.rs           shulker box and ender chest previews: reading their it
 src/ui.rs                 the screen: the HUD editor and the mod menu
 src/mixins/               the mod's own game-side code: the Config button, the logo on the Mods page, the scoreboard
 src/scoreboard.rs         the Scoreboard module's look, for its game-side code
+src/replay.rs             Replay: recordings the mod asks for and how they go, shared with the game-side tick
 src/freecam.rs            Freecam's camera: turning, flying, and where each frame is drawn from
 icon.png                  the logo, drawn from LOGO_ART in src/icons.rs by tools/logo.py
 src/ui/tests.rs           the screen's tests, with a fake draw context that can write SVG previews

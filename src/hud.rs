@@ -61,6 +61,8 @@ pub struct HudData {
     pub effects: Vec<Effect>,
     /// Seconds since 1970 in UTC.
     pub unix_seconds: u64,
+    /// A recording runs (the Replay module): how long it has, in milliseconds.
+    pub recording: Option<u64>,
     /// Milliseconds on the game's clock, for animation.
     pub now_ms: u64,
     pub sprint_toggled: bool,
@@ -414,6 +416,10 @@ pub fn content(m: &Module, data: &HudData) -> Option<Content> {
             (!shown.is_empty()).then(|| lines(shown)).flatten()
         }
         // The voice HUD is drawn by the game (it has the players' faces): see `voice::hud_place`.
+        Id::Replay => data
+            .recording
+            .filter(|_| m.bool("indicator"))
+            .and_then(|ms| lines(vec![replay_text(m, ms, data.now_ms)])),
         // The game draws the scoreboard (the scores are its): see `scoreboard::place`.
         Id::Scoreboard
         | Id::Freecam
@@ -425,6 +431,17 @@ pub fn content(m: &Module, data: &HudData) -> Option<Content> {
         | Id::VoiceStatus
         | Id::VoiceGroup
         | Id::VoiceSpeakers => None,
+    }
+}
+
+/// The Replay module's line while recording, `ms` in: REC (blinking, if it does) and the time.
+fn replay_text(m: &Module, ms: u64, now_ms: u64) -> String {
+    let lit = !m.bool("blink") || (now_ms / 600).is_multiple_of(2);
+    let rec = if lit { "REC" } else { "   " };
+    if m.bool("time") {
+        format!("{rec} {}", crate::replay::clock(ms))
+    } else {
+        rec.to_owned()
     }
 }
 
@@ -445,6 +462,7 @@ pub fn editor_content(m: &Module, data: &HudData) -> Option<Content> {
             faces: false,
             names: m.choice("style") == 1,
         }),
+        Id::Replay => Some(Content::Lines(vec![replay_text(m, 65_000, 0)])),
         Id::Scoreboard => {
             let numbers = m.bool("numbers");
             let line = |name: &str, n: u32| {
