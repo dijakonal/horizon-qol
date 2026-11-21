@@ -105,11 +105,39 @@ impl HudData {
 #[derive(Clone, Debug)]
 pub enum Content {
     Lines(Vec<String>),
+    /// A voice HUD element's stand-in for the editor, laid out as the game draws it: rows 12
+    /// pixels high with a 12-pixel icon (16 high with a 16-pixel face for speakers), 1 apart.
+    Voice {
+        rows: Vec<VoiceRow>,
+        faces: bool,
+        names: bool,
+    },
     Keys(KeysView),
     Armor {
         rows: Vec<ArmorRow>,
         horizontal: bool,
     },
+}
+
+/// A row of a voice HUD stand-in.
+#[derive(Clone, Debug)]
+pub struct VoiceRow {
+    pub text: String,
+    pub colour: u32,
+    pub icon: Option<&'static str>,
+    pub talking: bool,
+}
+
+pub const VOICE_TALKING: &str = "horizon_qol:gui/voice/icon_talking";
+pub const VOICE_GROUP: &str = "horizon_qol:gui/voice/icon_group";
+
+/// A voice row's height and its width before the text.
+fn voice_row(faces: bool, icon: bool) -> (f32, f32) {
+    if faces {
+        (16.0, 20.0)
+    } else {
+        (12.0, if icon { 12.0 } else { 0.0 })
+    }
 }
 
 /// Keystrokes' content: its mode and the parts it shows.
@@ -367,7 +395,15 @@ pub fn content(m: &Module, data: &HudData) -> Option<Content> {
         Id::ToggleSneak => (m.bool("status") && data.sneak_toggled)
             .then(|| lines(vec!["Sneaking (Toggled)".into()]))
             .flatten(),
-        Id::Zoom | Id::ShulkerPreview | Id::EnderPreview | Id::VoiceChat => None,
+        // The voice HUD is drawn by the game (it has the players' faces): see `voice::hud_place`.
+        Id::Zoom
+        | Id::ShulkerPreview
+        | Id::EnderPreview
+        | Id::VoiceChat
+        | Id::Hud
+        | Id::VoiceStatus
+        | Id::VoiceGroup
+        | Id::VoiceSpeakers => None,
     }
 }
 
@@ -376,7 +412,36 @@ pub fn editor_content(m: &Module, data: &HudData) -> Option<Content> {
     if let Some(c) = content(m, data) {
         return Some(c);
     }
+    let row = |text: &str, colour: u32, icon| VoiceRow {
+        text: text.to_owned(),
+        colour,
+        icon,
+        talking: false,
+    };
     match m.id {
+        Id::VoiceStatus => Some(Content::Voice {
+            rows: vec![row("Talking", 0xFF55FF55, Some(VOICE_TALKING))],
+            faces: false,
+            names: true,
+        }),
+        Id::VoiceGroup => Some(Content::Voice {
+            rows: vec![row("Group: Friends", 0xFF55FF55, Some(VOICE_GROUP))],
+            faces: false,
+            names: true,
+        }),
+        Id::VoiceSpeakers => Some(Content::Voice {
+            rows: ["Alex", "Steve", "Notch"]
+                .iter()
+                .take(m.f32("limit").max(1.0) as usize)
+                .enumerate()
+                .map(|(i, name)| VoiceRow {
+                    talking: i == 0,
+                    ..row(name, 0xFFFFFFFF, None)
+                })
+                .collect(),
+            faces: true,
+            names: m.bool("names"),
+        }),
         Id::Armor => Some(Content::Armor {
             rows: (0..4)
                 .map(|_| ArmorRow {
@@ -462,6 +527,21 @@ pub fn size(content: &Content, pad: f32, width: &dyn Fn(&str) -> f32) -> [f32; 2
                 [s * 3.0 + k.gap * 2.0, h]
             }
         },
+        Content::Voice { rows, faces, names } => {
+            let w = rows
+                .iter()
+                .map(|r| {
+                    let (_, lead) = voice_row(*faces, r.icon.is_some());
+                    if *faces && !*names {
+                        16.0
+                    } else {
+                        lead + width(&r.text) + 4.0
+                    }
+                })
+                .fold(0.0, f32::max);
+            let (h, _) = voice_row(*faces, false);
+            [w.ceil(), rows.len() as f32 * (h + 1.0) - 1.0]
+        }
         Content::Armor { rows, horizontal } => {
             let w = rows
                 .iter()
@@ -639,6 +719,20 @@ impl Ops<'_> {
         self.ops.push(GuiDraw::Pop);
     }
 
+    /// GUI sprite `name` stretched over `r`.
+    fn sprite(&mut self, name: &'static str, r: [f32; 4]) {
+        self.ops.push(GuiDraw::Sprite {
+            sprite: std::borrow::Cow::Borrowed(name),
+            x: r[0].round() as i32,
+            y: r[1].round() as i32,
+            w: r[2].round() as i32,
+            h: r[3].round() as i32,
+            region: None,
+            color: 0xFFFFFFFF,
+            blend: mod_api::client::hud_layout::Blend::Textured,
+        });
+    }
+
     fn icon(&mut self, icon: Icon, r: [f32; 4], color: u32) {
         let mut fills = Vec::new();
         icons::draw_in(icon, r, color, &mut |q, c| fills.push((q, c)));
@@ -758,6 +852,41 @@ pub fn draw(
             MODE_CONTROLLER => draw_controller(&mut o, k, &look, m, data, size),
             _ => draw_wasd(&mut o, k, &look, m, data, size),
         },
+        Content::Voice { rows, faces, names } => {
+            let back = if m.bool("background") {
+                with_alpha(0xFF000000, m.f32("background_opacity"))
+            } else {
+                0
+            };
+            let (row_h, _) = voice_row(*faces, false);
+            for (i, r) in rows.iter().enumerate() {
+                let y = i as f32 * (row_h + 1.0);
+                let (_, lead) = voice_row(*faces, r.icon.is_some());
+                let row_w = if *faces && !*names {
+                    16.0
+                } else {
+                    lead + (o.width)(&r.text) + 4.0
+                };
+                o.fill([0.0, y, row_w, row_h], back);
+                if *faces {
+                    // A face's stand-in: the game draws the player's own.
+                    o.fill([1.0, y + 1.0, 14.0, 14.0], 0xFF8A6A4A);
+                    o.fill([4.0, y + 6.0, 2.0, 2.0], 0xFF2A2A40);
+                    o.fill([10.0, y + 6.0, 2.0, 2.0], 0xFF2A2A40);
+                    let frame = if r.talking { 0xFFFFFFFF } else { 0x70AAAAAA };
+                    o.outline([0.0, y, 16.0, 16.0], frame);
+                    if *names {
+                        let ink = if r.talking { 0xFFFFFFFF } else { 0xFFAAAAAA };
+                        o.text(&r.text, 20.0, y + 4.0, ink);
+                    }
+                } else {
+                    if let Some(icon) = r.icon {
+                        o.sprite(icon, [1.0, y + 1.0, 10.0, 10.0]);
+                    }
+                    o.text(&r.text, lead + 2.0, y + 2.0, r.colour);
+                }
+            }
+        }
         Content::Armor { rows, horizontal } => {
             frame(&mut o);
             let p = look.pad;
@@ -828,6 +957,11 @@ fn collect_texts(content: &Content, f: &mut dyn FnMut(&str)) {
             }
             for s in ["A", "B", "X", "Y", "ZL", "ZR", "L", "R"] {
                 f(s);
+            }
+        }
+        Content::Voice { rows, .. } => {
+            for r in rows {
+                f(&r.text);
             }
         }
         Content::Armor { rows, .. } => {

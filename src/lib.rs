@@ -101,6 +101,11 @@ struct State {
     zoom_toggled: bool,
     /// The zoom while zooming, after scrolling; None when not zooming.
     zoom: Option<f32>,
+    /// The Voice Chat page's voice settings as last matched with the voice chat's own, to tell
+    /// which side changed them.
+    voice_synced: Option<Vec<String>>,
+    /// The voice chat as last seen, for its sounds.
+    last_voice: Option<voice::engine::qol::Snapshot>,
     /// When each key Keystrokes shows was last down, for its fade.
     last_down: HashMap<&'static str, u64>,
     /// The view's yaw and pitch at the last tick, for the controller's right stick.
@@ -150,11 +155,29 @@ impl HorizonQol {
             sneak_toggled: false,
             zoom_toggled: false,
             zoom: None,
+            voice_synced: None,
+            last_voice: None,
             last_down: HashMap::new(),
             last_rotation: None,
             layout: hud::keyboard::Detector::default(),
         });
         guard
+    }
+
+    /// Opens the screen on module `id`'s options page. False when it could not open.
+    fn open_on(&self, host: &mut dyn ClientHost, id: Id) -> bool {
+        if host.mod_screen().is_some() || !host.mod_screen_open(ID) {
+            return false;
+        }
+        voice::screen_taken();
+        if let Some(state) = self.state().as_mut() {
+            let mut gui = ui::Gui::new(ui::View::Menu);
+            if let Some(i) = state.modules.iter().position(|m| m.id == id) {
+                gui.open_options(i);
+            }
+            state.gui = Some(gui);
+        }
+        true
     }
 
     /// Runs `f` on the open screen, if this mod's screen is the one open.
@@ -573,6 +596,192 @@ impl ItemPart for EnderTooltip {
     }
 }
 
+/// The voice settings the Voice Chat page shows and the voice chat keeps.
+const VOICE_SYNCED: [&str; 6] = [
+    "mode",
+    "threshold",
+    "muted",
+    "disabled",
+    "volume",
+    "mic_gain",
+];
+
+fn voice_page_values(m: &Module) -> Vec<String> {
+    VOICE_SYNCED
+        .iter()
+        .map(|k| {
+            m.settings
+                .iter()
+                .find(|s| s.key() == *k)
+                .map_or_else(String::new, settings::Setting::write)
+        })
+        .collect()
+}
+
+/// Keeps the Voice Chat page and the voice chat's settings the same: a change on the page goes
+/// to the voice chat, and the voice chat's (its keys, its own pages) comes back to the page.
+fn sync_voice(state: &mut State) {
+    let Some(i) = state.modules.iter().position(|m| m.id == Id::VoiceChat) else {
+        return;
+    };
+    let ours = voice_page_values(&state.modules[i]);
+    if state
+        .voice_synced
+        .as_ref()
+        .is_some_and(|last| *last != ours)
+    {
+        let m = &state.modules[i];
+        let (mode, threshold, muted, disabled, volume, gain) = (
+            m.choice("mode"),
+            m.f32("threshold"),
+            m.bool("muted"),
+            m.bool("disabled"),
+            m.f32("volume"),
+            m.f32("mic_gain"),
+        );
+        voice::engine::qol::update(|s| {
+            s.mode = if mode == 1 {
+                voice::net::Mode::Voice
+            } else {
+                voice::net::Mode::PushToTalk
+            };
+            s.threshold = threshold.round() as i32;
+            s.muted = muted;
+            s.disabled = disabled;
+            s.volume = volume.round() as u32;
+            s.mic_gain = gain.round() as u32;
+        });
+    }
+    let e = voice::engine::qol::settings();
+    let m = &mut state.modules[i];
+    for setting in &mut m.settings {
+        let value = match setting.key() {
+            "mode" => if e.mode == voice::net::Mode::Voice {
+                "voice_activation"
+            } else {
+                "push_to_talk"
+            }
+            .to_owned(),
+            "threshold" => e.threshold.to_string(),
+            "muted" => e.muted.to_string(),
+            "disabled" => e.disabled.to_string(),
+            "volume" => e.volume.to_string(),
+            "mic_gain" => e.mic_gain.to_string(),
+            _ => continue,
+        };
+        setting.read(&value);
+    }
+    state.voice_synced = Some(voice_page_values(m));
+}
+
+/// The voice chat's sounds: what changed since the last tick, each kind if its setting is on.
+fn voice_sounds(host: &dyn ClientHost, state: &mut State, now: voice::engine::qol::Snapshot) {
+    use voice::engine::qol::Link;
+    let Some(before) = state.last_voice.replace(now.clone()) else {
+        return;
+    };
+    let m = state.module(Id::VoiceChat);
+    if !m.enabled || !m.bool("sounds") {
+        return;
+    }
+    let volume = m.f32("sound_volume") / 100.0;
+    if volume <= 0.0 {
+        return;
+    }
+    let play = |id: &str, pitch: f32| {
+        let mut sound = mod_api::SoundPlay::ui(id);
+        sound.volume = volume;
+        sound.pitch = pitch;
+        let _ = host.play_local_sound(&sound, 0);
+    };
+    if m.bool("sound_connect") {
+        let was = before.link == Link::Connected;
+        let is = now.link == Link::Connected;
+        if is && !was {
+            play("minecraft:block.note_block.chime", 1.4);
+        } else if was && matches!(now.link, Link::Failed(_) | Link::Connecting) {
+            play("minecraft:block.note_block.bass", 0.8);
+        }
+    }
+    if m.bool("sound_talk") && m.choice("mode") == 0 && before.transmitting != now.transmitting {
+        play(
+            "minecraft:block.note_block.hat",
+            if now.transmitting { 1.7 } else { 1.2 },
+        );
+    }
+    if m.bool("sound_mute") {
+        if before.muted != now.muted {
+            if now.muted {
+                play("minecraft:block.note_block.bass", 1.0);
+            } else {
+                play("minecraft:block.note_block.pling", 1.5);
+            }
+        }
+        if before.disabled != now.disabled {
+            play(
+                "minecraft:block.lever.click",
+                if now.disabled { 0.6 } else { 0.8 },
+            );
+        }
+    }
+    if m.bool("sound_group") {
+        match (&before.group, &now.group) {
+            (None, Some(_)) => play("minecraft:entity.experience_orb.pickup", 1.0),
+            (Some(_), None) => play("minecraft:block.wooden_button.click_off", 0.9),
+            (Some(a), Some(b)) if a == b && now.group_members > before.group_members => {
+                play("minecraft:block.note_block.bell", 1.6)
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Whether module `m`'s element makes way now: F3 or the chat is open and its rule (its own, or
+/// the HUD module's) says to hide.
+fn makes_way(m: &Module, hud: &Module, f3: bool, chat: bool) -> bool {
+    let hide = |key: &str| match m.choice(key) {
+        1 => true,
+        2 => false,
+        _ => hud.choice(key) == 0,
+    };
+    (f3 && hide("f3")) || (chat && hide("chat"))
+}
+
+/// F3 is open (it takes the top corners), and the chat box is.
+fn overlays(host: &dyn ClientHost) -> (bool, bool) {
+    let f3 = !host.native_corner_shown(mod_api::Corner::TopLeft);
+    let chat = host.observed_screen_id().is_some_and(|s| s.id == "chat");
+    (f3, chat)
+}
+
+/// Tells the game-side voice HUD where its three elements go and whether they show now.
+fn voice_slots(host: &dyn ClientHost, state: &State) {
+    let (f3, chat) = overlays(host);
+    let editing = host.mod_screen() == Some(ID) && !voice::menu_open(host);
+    let hud = state.module(Id::Hud);
+    let voice_on = state.on(Id::VoiceChat);
+    let slot = |id: Id| {
+        let m = state.module(id);
+        voice::HudSlot {
+            shown: hud.enabled && voice_on && m.enabled && !editing && !makes_way(m, hud, f3, chat),
+            place: m.place.map_or([0.0, 0.0], |p| [p.x, p.y]),
+            scale: m.f32("scale").max(0.1),
+            background: if m.bool("background") {
+                ((m.f32("background_opacity").clamp(0.0, 100.0) * 2.55).round() as u32) << 24
+            } else {
+                0
+            },
+            limit: m.f32("limit").max(1.0) as usize,
+            names: m.bool("names"),
+        }
+    };
+    voice::set_hud_slots([
+        slot(Id::VoiceStatus),
+        slot(Id::VoiceGroup),
+        slot(Id::VoiceSpeakers),
+    ]);
+}
+
 #[mod_api::horizon_mod]
 impl Hooks for HorizonQol {
     fn register(&self, r: &mut dyn Registrar, _: &RegistrationContext) {
@@ -631,7 +840,29 @@ impl Hooks for HorizonQol {
 
     fn client_tick_pre(&self, host: &mut dyn ClientHost, _: &mut ClientTickPreEvent) {
         let voice_on = self.state().as_ref().is_some_and(|s| s.on(Id::VoiceChat));
-        voice::tick(host, voice_on);
+        if voice::tick(host, voice_on) {
+            self.open_on(host, Id::VoiceChat);
+        }
+        // A page button of the Voice Chat page: the voice chat's own page, in the same screen.
+        let action = self
+            .state()
+            .as_mut()
+            .and_then(|s| s.gui.as_mut().and_then(|g| g.action.take()));
+        if let Some(action) = action {
+            if let Some(state) = self.state().as_mut()
+                && state.gui.as_ref().is_some_and(|g| g.dirty)
+            {
+                save_config(host, state);
+                if let Some(g) = state.gui.as_mut() {
+                    g.dirty = false;
+                }
+            }
+            voice::open_page(match action {
+                "groups" => voice::ui::Screen::Groups,
+                "volumes" => voice::ui::Screen::Volumes,
+                _ => voice::ui::Screen::Settings,
+            });
+        }
         if self.close.swap(false, Ordering::Relaxed) && !voice::menu_open(host) {
             host.mod_screen_close(ID);
         }
@@ -663,6 +894,9 @@ impl Hooks for HorizonQol {
             load_config(host, state);
         }
         read_player(host, state);
+        sync_voice(state);
+        voice_sounds(host, state, voice::engine::qol::snapshot());
+        voice_slots(host, state);
 
         // The previews' settings, and the ender chest remembered for this world or server.
         let shulker = state.module(Id::ShulkerPreview);
@@ -834,10 +1068,18 @@ impl Hooks for HorizonQol {
             return;
         }
         let size = event.batch.size();
+        let (f3, chat) = overlays(host);
+        let hud = state.module(Id::Hud);
+        if !hud.enabled {
+            return;
+        }
         for m in &state.modules {
             let (true, Some(place)) = (m.enabled, m.place) else {
                 continue;
             };
+            if makes_way(m, hud, f3, chat) {
+                continue;
+            }
             let Some(content) = hud::content(m, &state.data) else {
                 continue;
             };
@@ -948,6 +1190,28 @@ impl Hooks for HorizonQol {
         };
         let gui = state.gui.get_or_insert_with(new_gui);
         gui.binds = binds;
+        // The Voice Chat page's live rows: the connection, the group, the microphone.
+        let snap = voice::engine::qol::snapshot();
+        let voice_on = state
+            .modules
+            .iter()
+            .any(|m| m.id == Id::VoiceChat && m.enabled);
+        let (status, colour) = if voice_on {
+            (snap.status.0.clone(), snap.status.1 | 0xFF00_0000)
+        } else {
+            ("Off: switch the module on".to_owned(), 0xFFFF5555)
+        };
+        let group = match &snap.group {
+            Some(name) if !name.is_empty() => (name.clone(), 0xFF55FF55),
+            Some(_) => ("A group".to_owned(), 0xFF55FF55),
+            None => ("None".to_owned(), 0xFF9090A0),
+        };
+        gui.info = vec![
+            ("voice_status", status, colour),
+            ("voice_group", group.0, group.1),
+            ("hud_note", " ".to_owned(), 0),
+        ];
+        gui.meter = voice_on.then_some((snap.level_db, snap.threshold_db));
         gui.draw(
             &mut *event.draw,
             size,
@@ -1090,7 +1354,38 @@ impl Hooks for HorizonQol {
 
 #[cfg(test)]
 mod tests {
-    use super::key_label;
+    use super::{Id, key_label, makes_way, modules};
+
+    #[test]
+    fn elements_make_way_for_f3_and_the_chat_by_their_rule() {
+        let mut mods = modules::defaults();
+        let set = |mods: &mut Vec<modules::Module>, id: Id, key: &str, v: &str| {
+            let m = mods.iter_mut().find(|m| m.id == id).unwrap();
+            m.settings
+                .iter_mut()
+                .find(|s| s.key() == key)
+                .unwrap()
+                .read(v);
+        };
+        let get = |mods: &Vec<modules::Module>, id: Id| {
+            let hud = mods.iter().find(|m| m.id == Id::Hud).unwrap();
+            let m = mods.iter().find(|m| m.id == id).unwrap();
+            (
+                makes_way(m, hud, true, false),
+                makes_way(m, hud, false, true),
+                makes_way(m, hud, false, false),
+            )
+        };
+        // The HUD module's defaults: make way for F3, stay over the chat.
+        assert_eq!(get(&mods, Id::Fps), (true, false, false));
+        // An element's own rule wins over the global one.
+        set(&mut mods, Id::Fps, "f3", "show");
+        set(&mut mods, Id::Fps, "chat", "hide");
+        assert_eq!(get(&mods, Id::Fps), (false, true, false));
+        // The global rule moves the elements that follow it.
+        set(&mut mods, Id::Hud, "chat", "hide");
+        assert_eq!(get(&mods, Id::Coordinates), (true, true, false));
+    }
 
     #[test]
     fn key_labels_read_as_words() {

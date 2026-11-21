@@ -164,6 +164,15 @@ impl DrawContext for Recorder {
                     };
                     self.label(t, [tx + *x as f32 * s, ty + *y as f32 * s], s, *color);
                 }
+                GuiDraw::Sprite { x, y, w, h, .. } => {
+                    let r = [
+                        tx + *x as f32 * s,
+                        ty + *y as f32 * s,
+                        *w as f32 * s,
+                        *h as f32 * s,
+                    ];
+                    self.rect(r, 0xFF55CC66);
+                }
                 _ => {}
             }
         }
@@ -765,4 +774,89 @@ fn container_preview_grids() {
     );
     r.write("previews");
     assert_eq!([w, h], [170.0, 62.0]);
+}
+
+#[test]
+fn voice_hud_elements_preview_and_drag_in_the_editor() {
+    let mut mods = modules::defaults();
+    let mut g = gui(View::Editor);
+    let r = frame(&mut g, SIZE, [0.0, 0.0], &mods, "editor-voice");
+    for id in [Id::VoiceStatus, Id::VoiceGroup, Id::VoiceSpeakers] {
+        let i = mods.iter().position(|m| m.id == id).unwrap();
+        assert!(
+            g.elements.iter().any(|(m, _)| *m == i),
+            "{id:?} in the editor"
+        );
+    }
+    assert!(r.texts.iter().any(|(t, _)| t == "Group: Friends"));
+    assert!(r.texts.iter().any(|(t, _)| t == "Alex"));
+    // The speakers element drags and resizes like any other.
+    let sp = mods.iter().position(|m| m.id == Id::VoiceSpeakers).unwrap();
+    let (_, before) = *g.elements.iter().find(|(m, _)| *m == sp).unwrap();
+    let br = centre_of(
+        &g,
+        Target::Handle {
+            module: sp,
+            corner: 3,
+        },
+    );
+    assert!(g.mouse_pressed(br, 0, &mut mods));
+    assert!(g.mouse_dragged(
+        [before[0] + before[2] * 1.5, before[1] + before[3] * 1.5],
+        &mut mods
+    ));
+    assert!((mods[sp].f32("scale") - 1.5).abs() < 1e-4);
+    // Names off: the stand-in narrows to the faces.
+    let d = data();
+    let narrow = |mods: &[Module]| {
+        let m = &mods[sp];
+        let c = crate::hud::editor_content(m, &d).unwrap();
+        crate::hud::measure(m, &c, &|s| s.chars().count() as f32 * 6.0)
+    };
+    let wide = narrow(&mods);
+    mods[sp]
+        .settings
+        .iter_mut()
+        .find(|s| s.key() == "names")
+        .unwrap()
+        .read("false");
+    assert_eq!(narrow(&mods)[0], 16.0);
+    assert!(wide[0] > 16.0);
+}
+
+#[test]
+fn the_voice_page_shows_status_meter_and_page_buttons() {
+    let mut mods = all_on();
+    let vc = mods.iter().position(|m| m.id == Id::VoiceChat).unwrap();
+    let mut g = gui(View::Menu);
+    g.info = vec![("voice_status", "Connected (2.7)".to_owned(), 0xFF55FF55)];
+    g.meter = Some((-30.0, -50.0));
+    g.open_options(vc);
+    g.opened = Instant::now() - Duration::from_secs(1);
+    let mut r = Recorder::new(SIZE);
+    g.draw(&mut r, SIZE, [0.0, 0.0], &mods, &data(), "Right Shift");
+    r.write("options-voice");
+    assert!(r.texts.iter().any(|(t, _)| t == "Connected (2.7)"));
+    // Scroll to the Groups button and press it: the mod is told which page to open.
+    let groups = mods[vc]
+        .settings
+        .iter()
+        .position(|s| matches!(s, crate::settings::Setting::Action { id: "groups", .. }))
+        .unwrap();
+    let t = Target::Action {
+        module: vc,
+        setting: groups,
+    };
+    for _ in 0..80 {
+        if g.hits.iter().any(|(r, x)| *x == t && r[3] >= 9.0) {
+            break;
+        }
+        let c = [g.content[0] + 4.0, g.content[1] + 4.0];
+        g.scroll(c, -1.0, &mut mods);
+        let mut r = Recorder::new(SIZE);
+        g.draw(&mut r, SIZE, [0.0, 0.0], &mods, &data(), "Right Shift");
+        r.write("options-voice-scrolled");
+    }
+    assert!(g.mouse_pressed(centre_of(&g, t), 0, &mut mods));
+    assert_eq!(g.action, Some("groups"));
 }

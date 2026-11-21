@@ -17,6 +17,7 @@ pub mod ui;
 pub use opus_rs;
 mod hud;
 mod menu;
+pub mod qol;
 mod session;
 mod settings;
 mod voice;

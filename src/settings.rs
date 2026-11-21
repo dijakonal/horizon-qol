@@ -54,6 +54,19 @@ pub enum Setting {
     },
     /// A heading above the settings that follow.
     Heading { label: &'static str },
+    /// A line of text the mod fills in as it runs (a connection's status), under `key`.
+    Info {
+        key: &'static str,
+        label: &'static str,
+    },
+    /// A live level meter (the microphone's), with the activation threshold marked.
+    Meter { label: &'static str },
+    /// A button that does something now (opens a page), named `id` for the mod.
+    Action {
+        id: &'static str,
+        label: &'static str,
+        button: &'static str,
+    },
 }
 
 impl Setting {
@@ -117,6 +130,18 @@ impl Setting {
         Self::Heading { label }
     }
 
+    pub const fn info(key: &'static str, label: &'static str) -> Self {
+        Self::Info { key, label }
+    }
+
+    pub const fn meter(label: &'static str) -> Self {
+        Self::Meter { label }
+    }
+
+    pub const fn action(id: &'static str, label: &'static str, button: &'static str) -> Self {
+        Self::Action { id, label, button }
+    }
+
     /// The key the config file names it by; empty for a setting that isn't saved (a keybind,
     /// which Controls keeps, or a heading).
     pub fn key(&self) -> &'static str {
@@ -125,7 +150,11 @@ impl Setting {
             | Self::Slider { key, .. }
             | Self::Colour { key, .. }
             | Self::Choice { key, .. } => key,
-            Self::Bind { .. } | Self::Heading { .. } => "",
+            Self::Bind { .. }
+            | Self::Heading { .. }
+            | Self::Info { .. }
+            | Self::Meter { .. }
+            | Self::Action { .. } => "",
         }
     }
 
@@ -136,7 +165,10 @@ impl Setting {
             | Self::Colour { label, .. }
             | Self::Choice { label, .. }
             | Self::Bind { label, .. }
-            | Self::Heading { label } => label,
+            | Self::Heading { label }
+            | Self::Info { label, .. }
+            | Self::Meter { label }
+            | Self::Action { label, .. } => label,
         }
     }
 
@@ -146,7 +178,7 @@ impl Setting {
             Self::Slider { value, default, .. } => *value = *default,
             Self::Colour { value, default, .. } => *value = *default,
             Self::Choice { value, default, .. } => *value = *default,
-            Self::Bind { .. } | Self::Heading { .. } => {}
+            _ => {}
         }
     }
 
@@ -172,7 +204,7 @@ impl Setting {
             Self::Slider { value, .. } => format!("{value}"),
             Self::Colour { value, .. } => format!("#{value:08X}"),
             Self::Choice { value, options, .. } => options[*value].to_lowercase().replace(' ', "_"),
-            Self::Bind { .. } | Self::Heading { .. } => String::new(),
+            _ => String::new(),
         }
     }
 
@@ -206,7 +238,7 @@ impl Setting {
                     *value = i;
                 }
             }
-            Self::Bind { .. } | Self::Heading { .. } => {}
+            _ => {}
         }
     }
 

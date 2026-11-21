@@ -73,6 +73,8 @@ enum Target {
     ClearSearch,
     /// Setting `setting` of module `module`: a switch, or a slider's track.
     Setting { module: usize, setting: usize },
+    /// An action button of module `module`: setting `setting`.
+    Action { module: usize, setting: usize },
     /// Option `option` of choice setting `setting`.
     Choice {
         module: usize,
@@ -161,6 +163,12 @@ pub struct Gui {
     pub dirty: bool,
     /// The key each of the mod's Controls mappings is bound to, by mapping id, as shown.
     pub binds: Vec<(&'static str, String)>,
+    /// The text of each `Info` row, by key, filled in by the mod each frame.
+    pub info: Vec<(&'static str, String, u32)>,
+    /// The `Meter` row's level and threshold, in dB (-80 silence to 0).
+    pub meter: Option<(f32, f32)>,
+    /// An `Action` button was pressed: its id, for the mod to act on.
+    pub action: Option<&'static str>,
 }
 
 impl Gui {
@@ -182,6 +190,9 @@ impl Gui {
             elements: Vec::new(),
             dirty: false,
             binds: Vec::new(),
+            info: Vec::new(),
+            meter: None,
+            action: None,
         }
     }
 
@@ -1036,6 +1047,52 @@ impl Gui {
                     }
                 }
                 Setting::Heading { .. } => {}
+                Setting::Info { key, .. } => {
+                    let (text, colour) = self
+                        .info
+                        .iter()
+                        .find(|(k, _, _)| k == key)
+                        .map_or(("-".to_owned(), theme::TEXT_DIM), |(_, t, c)| {
+                            (t.clone(), *c)
+                        });
+                    let room = row[2] - 16.0 - p.width(setting.label()) - 16.0;
+                    let text = p.fit(&text, room.max(20.0));
+                    let tw = p.width(&text);
+                    p.text(&text, [row[0] + row[2] - 8.0 - tw, label_y], colour);
+                }
+                Setting::Meter { .. } => {
+                    // The level as a bar, green above the threshold (it would send), with the
+                    // threshold marked; -80 dB is the left end, 0 the right.
+                    let w = (aw * 0.5).clamp(60.0, 180.0);
+                    let bar = [
+                        row[0] + row[2] - 8.0 - w,
+                        row[1] + ROW_H / 2.0 - 3.0,
+                        w,
+                        6.0,
+                    ];
+                    p.fill(bar, theme::OFF);
+                    if let Some((level, threshold)) = self.meter {
+                        let f = |db: f32| ((db + 80.0) / 80.0).clamp(0.0, 1.0);
+                        let lit = if level >= threshold {
+                            theme::ON
+                        } else {
+                            theme::TEXT_FAINT
+                        };
+                        p.fill([bar[0], bar[1], bar[2] * f(level), bar[3]], lit);
+                        let t = bar[0] + bar[2] * f(threshold);
+                        p.fill([t.round(), bar[1] - 2.0, 1.0, bar[3] + 4.0], theme::TEXT);
+                    }
+                }
+                Setting::Action { button, .. } => {
+                    let bw = p.width(button) + 16.0;
+                    let r = [row[0] + row[2] - 6.0 - bw, row[1] + 4.0, bw, ROW_H - 8.0];
+                    let t = Target::Action {
+                        module: i,
+                        setting: s,
+                    };
+                    p.button(r, button, hover(t), false);
+                    self.hit(r, t);
+                }
                 Setting::Colour { value, .. } => {
                     let n = PALETTE.len();
                     let sw = 9.0;
@@ -1139,9 +1196,19 @@ impl Gui {
                     });
                     self.slide(at, modules);
                 }
-                Setting::Colour { .. } | Setting::Bind { .. } | Setting::Heading { .. } => {}
+                Setting::Colour { .. }
+                | Setting::Bind { .. }
+                | Setting::Heading { .. }
+                | Setting::Info { .. }
+                | Setting::Meter { .. }
+                | Setting::Action { .. } => {}
                 Setting::Choice { .. } => {}
             },
+            Target::Action { module, setting } => {
+                if let Setting::Action { id, .. } = modules[module].settings[setting] {
+                    self.action = Some(id);
+                }
+            }
             Target::Choice {
                 module,
                 setting,

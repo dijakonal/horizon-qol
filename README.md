@@ -34,7 +34,7 @@ module's settings page shows the key it uses.
 | Zoom | C | Zooms while held, or on and off in Toggle mode |
 | Toggle Sprint | Y | Sprinting on or off, while the module is on |
 | Toggle Sneak | not bound | Sneaking on or off, while the module is on |
-| Voice Chat Menu | V | Opens voice chat's own menu (as Simple Voice Chat does) |
+| Voice Chat Menu | V | Opens the Voice Chat page (as Simple Voice Chat's menu key does) |
 | Push to Talk | Caps Lock | Talks while held, in push-to-talk mode |
 | Whisper | not bound | Talks to the players right next to you only |
 | Mute Microphone | J | Mutes or unmutes your microphone |
@@ -61,7 +61,9 @@ module's settings page shows the key it uses.
 | Toggle Sprint | Its key switches sprinting on and off | Key, status on the HUD, stay on after a restart |
 | Toggle Sneak | Its key switches sneaking on and off | Key, status on the HUD |
 | Zoom | Zoom in; scroll while zooming to zoom more or less | Key, hold or toggle, zoom amount, smooth, scroll to adjust, slower mouse |
-| Voice Chat | Proximity voice chat on servers that run Simple Voice Chat | Its keys; the rest is in its own menu (V) |
+| HUD | Every HUD element on or off, and their rule for F3 and the chat | When F3 is open, when the chat is open |
+| Voice Chat | Proximity voice chat on servers that run Simple Voice Chat | Talk mode, levels, mute, sounds, keys, its pages |
+| Voice Status, Voice Group, Voice Speakers | Voice chat's HUD | Scale, background, most players, names |
 | Shulker Preview | A shulker box's tooltip shows its items as a grid of slots, tinted with the box's colour | Always or hold Shift, tint, Shift hint |
 | Ender Chest Preview | An ender chest's tooltip shows your ender chest as it was when you last opened one | Always or hold Shift, when it was last seen, Shift hint |
 
@@ -70,27 +72,51 @@ module's settings page shows the key it uses.
 Talk to the players near you on any server that runs the
 [Simple Voice Chat](https://modrinth.com/plugin/simple-voice-chat) plugin or mod, and they hear
 you, whether they play Horizon or Java Edition. It has positional audio, push-to-talk or voice
-activation, groups (with passwords), whispering, and per-player volume. Speaking icons show on
-the HUD and over players' heads.
+activation, groups (with passwords), whispering, and per-player volume.
 
-Press **V** for its own menu: microphone and speaker devices, voice levels, the activation
-threshold, groups and player volumes. Its settings are kept in
-`config/horizon_qol-client.toml`. The Voice Chat module's switch in the Horizon QoL menu turns all
-of it off: no connection, no microphone.
+![The Voice Chat page](docs/options-voice.png)
+
+**V** (or the Voice Chat card) opens its page in the mod menu:
+
+- **Status:** the connection, your group, and a live microphone meter with the voice
+  activation level marked, so you can see what will be sent.
+- **Talking:** push to talk or voice activation, the activation level, mute, and voice off.
+- **Volume:** voices and your microphone's gain.
+- **Sounds:** short sounds for connecting and disconnecting, pressing and letting go of push to
+  talk, muting and turning voice off, and joining and leaving groups (and someone joining
+  yours), each on or off, with a volume.
+- **Keys:** what each key is bound to (change them in Options > Controls).
+- **More:** buttons for its Groups, Player volumes and Audio devices pages.
+
+Its HUD is three elements in the **Voice** tab, edited like any other in the HUD editor (drag,
+resize, background, visibility):
+- **Voice Status:** connecting, talking, whispering, muted or off.
+- **Voice Group:** your group.
+- **Voice Speakers:** who's talking and your group's members, with their faces (at most a set
+  number, names optional).
+
+The game draws these, since it has the players' skins, where the editor puts them.
 
 - A server without Simple Voice Chat has no voice. The server's voice UDP port must be reachable
-  from your computer.
+  from your computer. Its settings are kept in `config/horizon_qol-client.toml`.
 - Privacy: while voice chat is on and connected, your microphone stays open for the live level
   meter, also in push-to-talk mode. In push-to-talk mode, audio is sent only while Push to Talk or
-  Whisper is held (plus a short tail). Audio is never written to disk. Turning it off (K, or the
-  module's switch) closes the microphone.
+  Whisper is held (plus a short tail). Audio is never written to disk. The Voice Chat module's
+  switch turns all of it off: no connection, no microphone.
 - Voice chat is [JKearnsl's Voice Chat for Horizon](https://github.com/JKearnsl/voice-chat) (MIT),
-  built into this mod. It is not made by or affiliated with Simple Voice Chat or its author. Its
-  Opus codec is a Rust port of libopus (BSD-3-Clause). Both licences are in `licenses/`.
+  built into this mod and reworked here. It is not made by or affiliated with Simple Voice Chat or
+  its author. Its Opus codec is a Rust port of libopus (BSD-3-Clause). Both licences are in
+  `licenses/`.
 - Voice chat changes some of the game's own code (its audio output, HUD and name tags), so the
   launcher downloads a larger SDK and builds a game patch the first time. It also builds two
   crates.io packages (`aes-gcm` and its dependencies), pinned in `Cargo.lock`. The launcher asks
   before running their build scripts.
+
+### F3 and the chat
+
+The **HUD** module (in the HUD tab) is the switch for every HUD element, and says what they do
+while F3 or the chat is open: by default they make way for F3 and stay over the chat. Each
+element's **Visibility** settings follow it (Global) or choose their own (Hide or Show).
 
 ### Container previews
 

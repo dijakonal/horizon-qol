@@ -55,9 +55,10 @@ pub fn config_reloading(event: &mut mod_api::ConfigReloadingEvent<'_>) {
     }
 }
 
-/// The client tick: keys, the menu's open and close, and saving changed settings. `on` is the
-/// Voice Chat module's switch.
-pub fn tick(host: &mut dyn ClientHost, on: bool) {
+/// The client tick: keys, the voice menu's close, and saving changed settings. `on` is the
+/// Voice Chat module's switch. True when the voice menu key was pressed: the mod opens its
+/// Voice Chat page.
+pub fn tick(host: &mut dyn ClientHost, on: bool) -> bool {
     vc::set_enabled(on);
     if let Some(language) = host.client_session().client_language() {
         vc::set_language(&language);
@@ -68,7 +69,7 @@ pub fn tick(host: &mut dyn ClientHost, on: bool) {
             host.mod_screen_close(vc::ID);
         }
         config::save(host);
-        return;
+        return false;
     }
 
     vc::key(vc::Key::PushToTalk, host.is_down(vc::ID, vc::KEY_PTT));
@@ -79,18 +80,7 @@ pub fn tick(host: &mut dyn ClientHost, on: bool) {
     if host.consume_click(vc::ID, vc::KEY_DISABLE) {
         vc::key(vc::Key::Disable, true);
     }
-    if host.consume_click(vc::ID, vc::KEY_MENU) && host.mod_screen().is_none() {
-        let key = host
-            .mod_key(vc::ID, vc::KEY_MENU)
-            .map(|(key, _)| key)
-            .unwrap_or_else(|| vc::DEFAULT_MENU.to_owned());
-        vc::menu_open(vc::key_char(&key));
-        if host.mod_screen_open(vc::ID) {
-            MENU_OPEN.store(true, Ordering::Relaxed);
-        } else {
-            vc::menu_sync(false);
-        }
-    }
+    let menu_key = host.consume_click(vc::ID, vc::KEY_MENU) && host.mod_screen().is_none();
     if vc::menu_take_close() && menu_open(host) {
         host.mod_screen_close(vc::ID);
     }
@@ -103,6 +93,15 @@ pub fn tick(host: &mut dyn ClientHost, on: bool) {
         host.play_local_sound(&mod_api::SoundPlay::ui("minecraft:ui.button.click"), 0);
     }
     config::save(host);
+    menu_key
+}
+
+/// Turns the open mod screen into the voice menu, on `page` (its groups, player volumes or
+/// audio devices): the mod's page buttons for what needs typing or a list.
+pub fn open_page(page: ui::Screen) {
+    vc::qol::menu_open_at(page);
+    MENU_OPEN.store(true, Ordering::Relaxed);
+    vc::menu_sync(true);
 }
 
 /// Leaving a server or closing the game: the voice connection ends and settings are saved.
@@ -188,4 +187,75 @@ pub fn key_pressed(host: &dyn ClientHost, key: &str, modifiers: u32) -> Flow {
 pub fn char_typed(c: char) -> Flow {
     vc::menu_char(c);
     Flow::Cancel
+}
+
+/// The voice HUD's three elements, as the game-side code asks for them.
+pub const HUD_STATUS: usize = 0;
+pub const HUD_GROUP: usize = 1;
+pub const HUD_SPEAKERS: usize = 2;
+
+/// Where one voice HUD element goes, as the mod's HUD editor left it: set every tick by the
+/// mod, read every frame by the game-side code that draws it (it has the players' faces).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HudSlot {
+    /// Shown now: its module is on, the HUD is on, and neither F3 nor the chat hides it.
+    pub shown: bool,
+    /// Its top left as a fraction of the screen, and its scale.
+    pub place: [f32; 2],
+    pub scale: f32,
+    /// Its background, ARGB (0 for none).
+    pub background: u32,
+    /// Speakers only: how many players at most, and whether their names show.
+    pub limit: usize,
+    pub names: bool,
+}
+
+impl Default for HudSlot {
+    fn default() -> Self {
+        Self {
+            shown: false,
+            place: [0.0, 0.0],
+            scale: 1.0,
+            background: 0x9000_0000,
+            limit: 6,
+            names: true,
+        }
+    }
+}
+
+static SLOTS: std::sync::Mutex<[HudSlot; 3]> = std::sync::Mutex::new(
+    [HudSlot {
+        shown: false,
+        place: [0.0, 0.0],
+        scale: 1.0,
+        background: 0x9000_0000,
+        limit: 6,
+        names: true,
+    }; 3],
+);
+
+pub fn set_hud_slots(slots: [HudSlot; 3]) {
+    *SLOTS.lock().unwrap_or_else(|e| e.into_inner()) = slots;
+}
+
+/// Element `kind`'s settings, when it shows now.
+pub fn hud_slot(kind: usize) -> Option<HudSlot> {
+    let slot = SLOTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(kind)
+        .copied()?;
+    slot.shown.then_some(slot)
+}
+
+/// Where element `kind`, `size` GUI pixels before scaling, is drawn on a screen of `screen`
+/// pixels: its top left (kept on the screen) and its scale. None when it doesn't show now.
+pub fn hud_place(kind: usize, size: [f32; 2], screen: [f32; 2]) -> Option<([f32; 2], f32)> {
+    let slot = hud_slot(kind)?;
+    let place = crate::modules::Place {
+        x: slot.place[0],
+        y: slot.place[1],
+    };
+    let r = crate::hud::rect(place, slot.scale, size, screen);
+    Some(([r[0], r[1]], slot.scale))
 }

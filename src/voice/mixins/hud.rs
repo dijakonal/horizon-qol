@@ -3,11 +3,15 @@ fn voicechat_hud(
     batch: &mut horizon_client::hud::HudBatch,
     corners: &mut horizon_client::extras_hud::Corners,
 ) {
-    use horizon_client::extras::Corner;
-    use mod_horizon_qol::voice::engine as vc;
-    if !(game.on(vc::ID) && vc::enabled()) {
+    // The voice HUD's three elements, each where Horizon QoL's HUD editor put it and at the
+    // scale it was given there: each is drawn unscaled at its top left, then scaled about it.
+    use mod_horizon_qol::voice as qv;
+    use qv::engine as vc;
+    let _ = corners;
+    if !game.on(vc::ID) || !vc::enabled() {
         return;
     }
+    let screen = [batch.width, batch.height];
     let draw_face = |batch: &mut horizon_client::hud::HudBatch,
                      atlas: &horizon_client::hud::HudAtlas,
                      skin: &str,
@@ -28,15 +32,21 @@ fn voicechat_hud(
             batch.rect_uv(x, y, size, size, face, u32::MAX);
         }
     };
-    if game.native_corner_shown(Corner::TopLeft) {
-        if let Some(group) = vc::hud_group() {
-            let icon = group
-                .icon
-                .filter(|&name| game.gui_sprite_pixels(name).is_some());
-            let icon_w = if icon.is_some() { 12.0 } else { 0.0 };
-            let w = icon_w + game.native_text_width(batch, &group.text) + 4.0;
-            let (x, y) = corners.place(Corner::TopLeft, w, 12.0);
-            game.native_fill(batch, [x, y, w, 12.0], 0x9000_0000);
+
+    // The group the player is in.
+    if let Some(group) = vc::hud_group()
+        && let Some(slot) = qv::hud_slot(qv::HUD_GROUP)
+    {
+        let icon = group
+            .icon
+            .filter(|&name| game.gui_sprite_pixels(name).is_some());
+        let icon_w = if icon.is_some() { 12.0 } else { 0.0 };
+        let w = icon_w + game.native_text_width(batch, &group.text) + 4.0;
+        if let Some(([x, y], scale)) = qv::hud_place(qv::HUD_GROUP, [w, 12.0], screen) {
+            let start = batch.vertices.len();
+            if slot.background >> 24 != 0 {
+                game.native_fill(batch, [x, y, w, 12.0], slot.background);
+            }
             if let Some(name) = icon {
                 game.native_sprite(
                     batch,
@@ -53,101 +63,147 @@ fn voicechat_hud(
                 group.rgb | 0xFF00_0000,
                 true,
             );
+            batch.scale_since(start, x, y, scale, scale);
         }
-        let mute_badge = game
-            .gui_sprite_pixels("horizon_qol:gui/voice/icon_mute")
-            .is_some();
-        let max_heads = (batch.height / 32.0).floor().max(3.0) as usize;
-        let heads = vc::hud_heads(max_heads);
-        let mut tab_skins = game
-            .remote_tab_players()
-            .map(|(players, _, _)| {
-                players
-                    .into_iter()
-                    .map(|p| (p.uuid, p.skin))
-                    .collect::<std::collections::HashMap<_, _>>()
-            })
-            .unwrap_or_default();
-        for head in heads {
-            let name_w = game.native_text_width(batch, &head.name);
-            let w = name_w + 24.0;
-            let (x, y) = corners.place(Corner::TopLeft, w, 16.0);
-            game.native_fill(batch, [x, y, w, 16.0], 0x7000_0000);
-            let own = game
-                .remote
-                .as_ref()
-                .is_some_and(|r| r.profile() == head.uuid);
-            let skin = if own {
-                game.player_model.as_ref().and_then(|m| m.skin.clone())
-            } else {
-                tab_skins.remove(&head.uuid).or_else(|| {
-                    game.remote
-                        .as_ref()
-                        .and_then(|r| r.player_entity(head.uuid))
-                        .and_then(|id| game.mobs.iter().find(|m| m.id == id))
-                        .and_then(|m| m.skin.clone())
+    }
+
+    // The players talking, and the group's members.
+    if let Some(slot) = qv::hud_slot(qv::HUD_SPEAKERS) {
+        let heads = vc::hud_heads(slot.limit.max(1));
+        if !heads.is_empty() {
+            let mute_badge = game
+                .gui_sprite_pixels("horizon_qol:gui/voice/icon_mute")
+                .is_some();
+            let w = heads
+                .iter()
+                .map(|h| {
+                    if slot.names {
+                        game.native_text_width(batch, &h.name) + 24.0
+                    } else {
+                        16.0
+                    }
                 })
+                .fold(16.0_f32, f32::max);
+            let h = heads.len() as f32 * 17.0 - 1.0;
+            if let Some(([x, y0], scale)) = qv::hud_place(qv::HUD_SPEAKERS, [w, h], screen) {
+                let start = batch.vertices.len();
+                let mut tab_skins = game
+                    .remote_tab_players()
+                    .map(|(players, _, _)| {
+                        players
+                            .into_iter()
+                            .map(|p| (p.uuid, p.skin))
+                            .collect::<std::collections::HashMap<_, _>>()
+                    })
+                    .unwrap_or_default();
+                for (i, head) in heads.iter().enumerate() {
+                    let y = y0 + i as f32 * 17.0;
+                    let row_w = if slot.names {
+                        game.native_text_width(batch, &head.name) + 24.0
+                    } else {
+                        16.0
+                    };
+                    if slot.background >> 24 != 0 {
+                        game.native_fill(batch, [x, y, row_w, 16.0], slot.background);
+                    }
+                    let own = game
+                        .remote
+                        .as_ref()
+                        .is_some_and(|r| r.profile() == head.uuid);
+                    let skin = if own {
+                        game.player_model.as_ref().and_then(|m| m.skin.clone())
+                    } else {
+                        tab_skins.remove(&head.uuid).or_else(|| {
+                            game.remote
+                                .as_ref()
+                                .and_then(|r| r.player_entity(head.uuid))
+                                .and_then(|id| game.mobs.iter().find(|m| m.id == id))
+                                .and_then(|m| m.skin.clone())
+                        })
+                    }
+                    .unwrap_or_else(|| horizon_client::tab_list::default_skin(head.uuid).to_owned());
+                    let skin = game.face_skin(head.uuid, &skin);
+                    draw_face(batch, &game.gui.atlas, &skin, x + 1.0, y + 1.0, 14.0);
+                    if !head.talking {
+                        game.native_fill(batch, [x + 1.0, y + 1.0, 14.0, 14.0], 0x4000_0000);
+                    }
+                    let frame = if head.talking {
+                        0xFFFF_FFFF
+                    } else {
+                        0x70AA_AAAA
+                    };
+                    game.native_fill(batch, [x, y, 16.0, 1.0], frame);
+                    game.native_fill(batch, [x, y + 15.0, 16.0, 1.0], frame);
+                    game.native_fill(batch, [x, y, 1.0, 16.0], frame);
+                    game.native_fill(batch, [x + 15.0, y, 1.0, 16.0], frame);
+                    if head.muted && mute_badge {
+                        game.native_fill(batch, [x + 8.0, y + 8.0, 8.0, 8.0], 0xB010_1014);
+                        game.native_sprite(
+                            batch,
+                            "horizon_qol:gui/voice/icon_mute",
+                            [0.0, 0.0, 16.0, 16.0],
+                            [x + 8.0, y + 8.0, 8.0, 8.0],
+                            None,
+                        );
+                    }
+                    if slot.names {
+                        game.native_text(
+                            batch,
+                            &head.name,
+                            [x + 20.0, y + 4.0],
+                            if head.talking { 0xFFFF_FFFF } else { 0xFFAA_AAAA },
+                            true,
+                        );
+                    }
+                }
+                batch.scale_since(start, x, y0, scale, scale);
             }
-            .unwrap_or_else(|| horizon_client::tab_list::default_skin(head.uuid).to_owned());
-            let skin = game.face_skin(head.uuid, &skin);
-            draw_face(batch, &game.gui.atlas, &skin, x + 1.0, y + 1.0, 14.0);
-            if !head.talking {
-                game.native_fill(batch, [x + 1.0, y + 1.0, 14.0, 14.0], 0x4000_0000);
-            }
-            let frame = if head.talking {
-                0xFFFF_FFFF
-            } else {
-                0x70AA_AAAA
-            };
-            game.native_fill(batch, [x, y, 16.0, 1.0], frame);
-            game.native_fill(batch, [x, y + 15.0, 16.0, 1.0], frame);
-            game.native_fill(batch, [x, y, 1.0, 16.0], frame);
-            game.native_fill(batch, [x + 15.0, y, 1.0, 16.0], frame);
-            if head.muted && mute_badge {
-                game.native_fill(batch, [x + 8.0, y + 8.0, 8.0, 8.0], 0xB010_1014);
-                game.native_sprite(
-                    batch,
-                    "horizon_qol:gui/voice/icon_mute",
-                    [0.0, 0.0, 16.0, 16.0],
-                    [x + 8.0, y + 8.0, 8.0, 8.0],
-                    None,
-                );
-            }
-            game.native_text(
-                batch,
-                &head.name,
-                [x + 20.0, y + 4.0],
-                if head.talking { 0xFFFF_FFFF } else { 0xFFAA_AAAA },
-                true,
-            );
         }
     }
-    if !game.native_corner_shown(Corner::BottomLeft) {
-        return;
-    }
-    for line in vc::hud() {
-        let icon = line
-            .icon
-            .filter(|&name| game.gui_sprite_pixels(name).is_some());
-        let icon_w = if icon.is_some() { 12.0 } else { 0.0 };
-        let w = icon_w + game.native_text_width(batch, &line.text) + 4.0;
-        let (x, y) = corners.place(Corner::BottomLeft, w, 12.0);
-        game.native_fill(batch, [x, y, w, 12.0], 0x9000_0000);
-        if let Some(name) = icon {
-            game.native_sprite(
-                batch,
-                name,
-                [0.0, 0.0, 16.0, 16.0],
-                [x + 1.0, y + 1.0, 10.0, 10.0],
-                None,
-            );
+
+    // The connection and the player's own voice: talking, muted, off.
+    if let Some(slot) = qv::hud_slot(qv::HUD_STATUS) {
+        let lines = vc::hud();
+        if !lines.is_empty() {
+            let rows: Vec<_> = lines
+                .iter()
+                .map(|line| {
+                    let icon = line
+                        .icon
+                        .filter(|&name| game.gui_sprite_pixels(name).is_some());
+                    let icon_w = if icon.is_some() { 12.0 } else { 0.0 };
+                    let w = icon_w + game.native_text_width(batch, &line.text) + 4.0;
+                    (icon, icon_w, w)
+                })
+                .collect();
+            let w = rows.iter().map(|r| r.2).fold(0.0_f32, f32::max);
+            let h = rows.len() as f32 * 13.0 - 1.0;
+            if let Some(([x, y0], scale)) = qv::hud_place(qv::HUD_STATUS, [w, h], screen) {
+                let start = batch.vertices.len();
+                for (i, (line, (icon, icon_w, row_w))) in lines.iter().zip(rows).enumerate() {
+                    let y = y0 + i as f32 * 13.0;
+                    if slot.background >> 24 != 0 {
+                        game.native_fill(batch, [x, y, row_w, 12.0], slot.background);
+                    }
+                    if let Some(name) = icon {
+                        game.native_sprite(
+                            batch,
+                            name,
+                            [0.0, 0.0, 16.0, 16.0],
+                            [x + 1.0, y + 1.0, 10.0, 10.0],
+                            None,
+                        );
+                    }
+                    game.native_text(
+                        batch,
+                        &line.text,
+                        [x + icon_w + 2.0, y + 2.0],
+                        line.rgb | 0xFF00_0000,
+                        true,
+                    );
+                }
+                batch.scale_since(start, x, y0, scale, scale);
+            }
         }
-        game.native_text(
-            batch,
-            &line.text,
-            [x + icon_w + 2.0, y + 2.0],
-            line.rgb | 0xFF00_0000,
-            true,
-        );
     }
 }

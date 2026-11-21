@@ -9,16 +9,23 @@ pub enum Category {
     Hud,
     Inventory,
     Utility,
+    Voice,
 }
 
 impl Category {
     /// Every category, in sidebar order.
-    pub const ALL: [Category; 3] = [Category::Hud, Category::Inventory, Category::Utility];
+    pub const ALL: [Category; 4] = [
+        Category::Hud,
+        Category::Inventory,
+        Category::Utility,
+        Category::Voice,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             Category::Hud => "HUD",
             Category::Inventory => "Inventory",
+            Category::Voice => "Voice",
             Category::Utility => "Utility",
         }
     }
@@ -27,6 +34,7 @@ impl Category {
 /// Which module a [`Module`] is.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum Id {
+    Hud,
     Fps,
     Cps,
     Keystrokes,
@@ -41,12 +49,16 @@ pub enum Id {
     ShulkerPreview,
     EnderPreview,
     VoiceChat,
+    VoiceStatus,
+    VoiceGroup,
+    VoiceSpeakers,
 }
 
 impl Id {
     /// The key the config file names it by.
     pub fn key(self) -> &'static str {
         match self {
+            Id::Hud => "hud",
             Id::Fps => "fps",
             Id::Cps => "cps",
             Id::Keystrokes => "keystrokes",
@@ -61,6 +73,9 @@ impl Id {
             Id::ShulkerPreview => "shulker_preview",
             Id::EnderPreview => "ender_preview",
             Id::VoiceChat => "voice_chat",
+            Id::VoiceStatus => "voice_status",
+            Id::VoiceGroup => "voice_group",
+            Id::VoiceSpeakers => "voice_speakers",
         }
     }
 }
@@ -131,6 +146,42 @@ fn hud_settings(own: Vec<Setting>) -> Vec<Setting> {
         Setting::colour("border_colour", "Border colour", 0xFF4F8CFF),
         Setting::slider("padding", "Padding", 4.0, [0.0, 10.0, 1.0], "{}px"),
     ]);
+    s.extend(visibility());
+    s
+}
+
+/// When F3 or the chat is open, each element follows the HUD module's rule, or its own.
+pub const VISIBILITY: &[&str] = &["Global", "Hide", "Show"];
+
+fn visibility() -> [Setting; 3] {
+    [
+        Setting::heading("Visibility"),
+        Setting::choice("f3", "When F3 is open", 0, VISIBILITY),
+        Setting::choice("chat", "When the chat is open", 0, VISIBILITY),
+    ]
+}
+
+/// A voice HUD element's settings: what it shows, its look and its visibility. The game draws
+/// it (it has the players' faces), so its text keeps the voice chat's own colours.
+fn voice_hud_settings(own: Vec<Setting>) -> Vec<Setting> {
+    let mut s = Vec::new();
+    if !own.is_empty() {
+        s.push(Setting::heading("Module"));
+        s.extend(own);
+    }
+    s.extend([
+        Setting::heading("Look"),
+        Setting::slider("scale", "Scale", 1.0, [0.5, 3.0, 0.05], "{}x"),
+        Setting::toggle("background", "Background", true),
+        Setting::slider(
+            "background_opacity",
+            "Background opacity",
+            55.0,
+            [0.0, 100.0, 5.0],
+            "{}%",
+        ),
+    ]);
+    s.extend(visibility());
     s
 }
 
@@ -214,6 +265,25 @@ pub fn defaults() -> Vec<Module> {
         }
     };
     vec![
+        Module::new(
+            Id::Hud,
+            "HUD",
+            "Turns every HUD element on or off, and says when they make way for F3 and the chat.",
+            Hud,
+            0xFF64748B,
+            true,
+            None,
+            vec![
+                Setting::heading("When F3 is open"),
+                Setting::choice("f3", "HUD elements", 0, &["Hide", "Show"]),
+                Setting::heading("When the chat is open"),
+                Setting::choice("chat", "HUD elements", 1, &["Hide", "Show"]),
+                Setting::info(
+                    "hud_note",
+                    "Each element can follow these or choose its own, under Visibility",
+                ),
+            ],
+        ),
         Module::new(
             Id::Fps,
             "FPS",
@@ -431,18 +501,93 @@ pub fn defaults() -> Vec<Module> {
         Module::new(
             Id::VoiceChat,
             "Voice Chat",
-            "Talk to nearby players on servers with Simple Voice Chat. Its menu key opens its own settings.",
-            Utility,
+            "Talk to nearby players on servers with Simple Voice Chat.",
+            Voice,
             0xFF22C55E,
             true,
             None,
             vec![
-                Setting::bind(crate::voice::engine::KEY_MENU, "Voice menu"),
+                Setting::heading("Status"),
+                Setting::info("voice_status", "Connection"),
+                Setting::info("voice_group", "Group"),
+                Setting::meter("Microphone"),
+                Setting::heading("Talking"),
+                Setting::choice("mode", "Talk", 0, &["Push to talk", "Voice activation"]),
+                Setting::slider(
+                    "threshold",
+                    "Voice activation level",
+                    -50.0,
+                    [-80.0, 0.0, 1.0],
+                    "{} dB",
+                ),
+                Setting::toggle("muted", "Microphone muted", false),
+                Setting::toggle("disabled", "Voice chat off", false),
+                Setting::heading("Volume"),
+                Setting::slider("volume", "Voices", 100.0, [0.0, 200.0, 5.0], "{}%"),
+                Setting::slider(
+                    "mic_gain",
+                    "Microphone gain",
+                    100.0,
+                    [10.0, 500.0, 10.0],
+                    "{}%",
+                ),
+                Setting::heading("Sounds"),
+                Setting::toggle("sounds", "Play sounds", true),
+                Setting::slider(
+                    "sound_volume",
+                    "Sound volume",
+                    60.0,
+                    [0.0, 100.0, 5.0],
+                    "{}%",
+                ),
+                Setting::toggle("sound_connect", "Connecting and disconnecting", true),
+                Setting::toggle("sound_talk", "Push to talk pressed and let go", true),
+                Setting::toggle("sound_mute", "Muting and turning voice off", true),
+                Setting::toggle("sound_group", "Joining and leaving groups", true),
+                Setting::heading("Keys"),
+                Setting::bind(crate::voice::engine::KEY_MENU, "Open this page"),
                 Setting::bind(crate::voice::engine::KEY_PTT, "Push to talk"),
                 Setting::bind(crate::voice::engine::KEY_WHISPER, "Whisper"),
                 Setting::bind(crate::voice::engine::KEY_MUTE, "Mute microphone"),
-                Setting::bind(crate::voice::engine::KEY_DISABLE, "Turn voice off"),
+                Setting::bind(crate::voice::engine::KEY_DISABLE, "Voice chat off / on"),
+                Setting::heading("More"),
+                Setting::action("groups", "Groups: join, create, leave", "Groups"),
+                Setting::action("volumes", "Each player's volume", "Player volumes"),
+                Setting::action("devices", "Microphone and speaker devices", "Audio devices"),
             ],
+        ),
+        Module::new(
+            Id::VoiceStatus,
+            "Voice Status",
+            "Your voice on the HUD: connecting, talking, whispering, muted or off.",
+            Voice,
+            0xFF16A34A,
+            true,
+            Some([0.0, 0.9]),
+            voice_hud_settings(vec![]),
+        ),
+        Module::new(
+            Id::VoiceGroup,
+            "Voice Group",
+            "The voice group you're in, on the HUD.",
+            Voice,
+            0xFF15803D,
+            true,
+            Some([0.0, 0.45]),
+            voice_hud_settings(vec![]),
+        ),
+        Module::new(
+            Id::VoiceSpeakers,
+            "Voice Speakers",
+            "The players talking and your group's members, with their faces, on the HUD.",
+            Voice,
+            0xFF4ADE80,
+            true,
+            Some([0.0, 0.52]),
+            voice_hud_settings(vec![
+                Setting::slider("limit", "Most players shown", 6.0, [1.0, 16.0, 1.0], "{}"),
+                Setting::toggle("names", "Show names", true),
+            ]),
         ),
         Module::new(
             Id::Zoom,
