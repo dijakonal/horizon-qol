@@ -134,6 +134,8 @@ struct State {
     /// visit (stopping it by hand keeps it stopped), and the recording as last seen.
     replay_session: Option<String>,
     replay_was: Option<replay::Status>,
+    /// Ticks since joining the world: Replay records by itself once the world has loaded.
+    replay_ticks: u32,
     /// The profile in use, by name: changes save to it too.
     active_profile: Option<String>,
     /// The saved profiles: name and file name, by name.
@@ -183,6 +185,7 @@ impl HorizonQol {
             camera_before: None,
             replay_session: None,
             replay_was: None,
+            replay_ticks: 0,
             zoom_toggled: false,
             zoom: None,
             voice_synced: None,
@@ -1144,23 +1147,33 @@ fn replay_decide(host: &dyn ClientHost, state: &mut State, pressed: bool, said: 
         }
         replay::clear_status();
         state.replay_session = None;
+        state.replay_ticks = 0;
         state.data.recording = None;
         return;
     }
+    state.replay_ticks = state.replay_ticks.saturating_add(1);
     let is_server = server.as_ref().is_some_and(|s| s.save_folder.is_none());
     let place = place.unwrap_or_default();
     let name = replay::recording_name(&place);
     let status = replay::status();
     let active = status.as_ref().is_some_and(|s| s.active);
     let replaying = status.as_ref().is_some_and(|s| s.replaying);
-    // Once the game has said how recording goes here, decide once whether to start by itself.
-    if on && status.is_some() && !replaying && state.replay_session.as_deref() != Some(&place) {
+    // Once the game has said how recording goes here and the world has had a few seconds to
+    // load, decide once whether to start by itself.
+    if on
+        && status.is_some()
+        && !replaying
+        && state.replay_ticks >= REPLAY_AUTO_DELAY
+        && state.replay_session.as_deref() != Some(&place)
+    {
         state.replay_session = Some(place.clone());
         if !active && replay::auto_records(auto, is_server) {
             replay::start(&name);
         }
     }
-    if pressed && on {
+    if pressed && !on {
+        say("Replay is off: switch it on in the mod menu (Right Shift, then Mods).".to_owned());
+    } else if pressed {
         if replaying {
             say("A replay is playing: there's nothing new to record.".to_owned());
         } else if active {
@@ -1172,6 +1185,9 @@ fn replay_decide(host: &dyn ClientHost, state: &mut State, pressed: bool, said: 
     state.data.recording = status.as_ref().filter(|s| s.active).map(|s| s.elapsed_ms);
     state.replay_was = status;
 }
+
+/// How long Replay waits after joining before it records by itself, in ticks: the world loads.
+const REPLAY_AUTO_DELAY: u32 = 60;
 
 /// Tells the game-side scoreboard where it goes and how it looks, or that the game draws its
 /// own (the module is off).
@@ -1873,6 +1889,7 @@ impl Hooks for HorizonQol {
             ("hud_note", " ".to_owned(), 0),
             ("freecam_note", " ".to_owned(), 0),
             replay_status,
+            ("replay_note", " ".to_owned(), 0),
             (
                 "replay_where",
                 "Options > Horizon Settings > Replay Studio".to_owned(),

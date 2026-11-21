@@ -46,6 +46,7 @@ pub enum Id {
     Scoreboard,
     Freecam,
     Replay,
+    RecIndicator,
     /// Toggle Sprint & Sneak (its key is Toggle Sprint's, from before the two were one).
     ToggleSprint,
     Zoom,
@@ -73,6 +74,7 @@ impl Id {
             Id::Scoreboard => "scoreboard",
             Id::Freecam => "freecam",
             Id::Replay => "replay",
+            Id::RecIndicator => "rec_indicator",
             Id::ToggleSprint => "toggle_sprint",
             Id::Zoom => "zoom",
             Id::ShulkerPreview => "shulker_preview",
@@ -495,6 +497,29 @@ pub fn defaults() -> Vec<Module> {
             ]),
         ),
         Module::new(
+            Id::RecIndicator,
+            "Recording Indicator",
+            "Shows REC and how long while the Replay module records.",
+            Hud,
+            0xFFEF4444,
+            true,
+            Some([0.5, 0.0]),
+            with_default(
+                with_default(
+                    hud_settings(vec![Setting::toggle("time", "Show how long", true)]),
+                    "text_colour",
+                    |s| {
+                        if let Setting::Colour { value, default, .. } = s {
+                            *value = 0xFFEF4444;
+                            *default = 0xFFEF4444;
+                        }
+                    },
+                ),
+                "background",
+                off,
+            ),
+        ),
+        Module::new(
             Id::Scoreboard,
             "Scoreboard",
             "The server's sidebar scoreboard, moved where you like, without the red numbers if you \
@@ -533,33 +558,20 @@ pub fn defaults() -> Vec<Module> {
              Replay Studio. Its key (F7) starts and stops a recording; it can start by itself.",
             Utility,
             0xFFDC2626,
-            false,
-            Some([0.5, 0.0]),
-            with_default(
-                with_default(
-                    hud_settings(vec![
-                        Setting::heading("Recording"),
-                        Setting::bind(MAP_RECORD, "Record key (start / stop)"),
-                        Setting::choice("auto", "Record by itself", 3, crate::replay::AUTO),
-                        Setting::toggle("say", "Say in chat when it starts and saves", true),
-                        Setting::info("replay_status", "Now"),
-                        Setting::info("replay_where", "Watch and edit in"),
-                        Setting::heading("On the HUD"),
-                        Setting::toggle("indicator", "Show REC while recording", true),
-                        Setting::toggle("blink", "Blink", true),
-                        Setting::toggle("time", "Show how long", true),
-                    ]),
-                    "text_colour",
-                    |s| {
-                        if let Setting::Colour { value, default, .. } = s {
-                            *value = 0xFFEF4444;
-                            *default = 0xFFEF4444;
-                        }
-                    },
+            true,
+            None,
+            vec![
+                Setting::heading("Recording"),
+                Setting::bind(MAP_RECORD, "Record key (start / stop)"),
+                Setting::choice("auto", "Record by itself", 0, crate::replay::AUTO),
+                Setting::toggle("say", "Say in chat when it starts and saves", true),
+                Setting::info("replay_status", "Now"),
+                Setting::info("replay_where", "Watch and edit in"),
+                Setting::info(
+                    "replay_note",
+                    "REC on the HUD is the Recording Indicator module, in the HUD tab",
                 ),
-                "background",
-                off,
-            ),
+            ],
         ),
         Module::new(
             Id::ToggleSprint,

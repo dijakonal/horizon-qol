@@ -20,7 +20,21 @@ fn voicechat_tick(game: &mut crate::game::Game<'_>) {
     {
         use mod_horizon_qol::replay as qr;
         let replaying = game.replay.playing();
-        if let Some(request) = qr::take_request() {
+        // A start waits until the player has joined the world (and isn't reconfiguring), so the
+        // recording begins with the world it shows.
+        let ready = game.player.is_some()
+            && game
+                .remote
+                .as_ref()
+                .is_some_and(|r| r.joined && r.reconfiguring.is_none());
+        let request = match qr::take_request() {
+            Some(Some(name)) if !ready && !replaying => {
+                qr::start(&name);
+                None
+            }
+            other => other,
+        };
+        if let Some(request) = request {
             let start = request.is_some();
             let result = match &request {
                 Some(_) if replaying => Err("a replay is playing".to_owned()),

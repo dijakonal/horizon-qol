@@ -416,12 +416,10 @@ pub fn content(m: &Module, data: &HudData) -> Option<Content> {
             (!shown.is_empty()).then(|| lines(shown)).flatten()
         }
         // The voice HUD is drawn by the game (it has the players' faces): see `voice::hud_place`.
-        Id::Replay => data
-            .recording
-            .filter(|_| m.bool("indicator"))
-            .and_then(|ms| lines(vec![replay_text(m, ms, data.now_ms)])),
+        Id::RecIndicator => data.recording.and_then(|ms| lines(vec![rec_text(m, ms)])),
         // The game draws the scoreboard (the scores are its): see `scoreboard::place`.
         Id::Scoreboard
+        | Id::Replay
         | Id::Freecam
         | Id::Zoom
         | Id::ShulkerPreview
@@ -434,14 +432,12 @@ pub fn content(m: &Module, data: &HudData) -> Option<Content> {
     }
 }
 
-/// The Replay module's line while recording, `ms` in: REC (blinking, if it does) and the time.
-fn replay_text(m: &Module, ms: u64, now_ms: u64) -> String {
-    let lit = !m.bool("blink") || (now_ms / 600).is_multiple_of(2);
-    let rec = if lit { "REC" } else { "   " };
+/// The Recording Indicator's line, `ms` into the recording: REC, and the time.
+fn rec_text(m: &Module, ms: u64) -> String {
     if m.bool("time") {
-        format!("{rec} {}", crate::replay::clock(ms))
+        format!("REC {}", crate::replay::clock(ms))
     } else {
-        rec.to_owned()
+        "REC".to_owned()
     }
 }
 
@@ -462,7 +458,7 @@ pub fn editor_content(m: &Module, data: &HudData) -> Option<Content> {
             faces: false,
             names: m.choice("style") == 1,
         }),
-        Id::Replay => Some(Content::Lines(vec![replay_text(m, 65_000, 0)])),
+        Id::RecIndicator => Some(Content::Lines(vec![rec_text(m, 65_000)])),
         Id::Scoreboard => {
             let numbers = m.bool("numbers");
             let line = |name: &str, n: u32| {

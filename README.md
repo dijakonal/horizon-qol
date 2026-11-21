@@ -67,7 +67,8 @@ cancels, Backspace leaves it unbound, a right-click puts back the default).
 | Toggle Sprint & Sneak | Its keys switch sprinting and sneaking on and off | Each on or off, their keys, status on the HUD, keep sprinting after a restart |
 | Scoreboard | The server's sidebar scoreboard as a HUD element you can move and resize | Score numbers (off to start with), title, text shadow, background colour and opacity, title band |
 | Freecam | Its key (F6) flies the camera away from your player, through blocks; your player stays still | Key, speed, level or where-you-look flight, see your player, clear water and lava fog |
-| Replay | Records what you play for Horizon's Replay Studio, as ReplayMod does | Record key, record by itself (off, servers, single player, everywhere), chat messages, REC on the HUD (blink, time) |
+| Replay | Records what you play for Horizon's Replay Studio, as ReplayMod does | Record key, record by itself (off, servers, single player, everywhere), chat messages |
+| Recording Indicator | REC and how long, on the HUD, while Replay records | Show the time, and the look every element has |
 | Zoom | Zoom in; scroll while zooming to zoom more or less | Key, hold or toggle, zoom amount, smooth, scroll to adjust, slower mouse |
 | HUD | Every HUD element on or off, and their rule for F3 and the chat | When F3 is open, when the chat is open |
 | Voice Chat | Proximity voice chat on servers that run Simple Voice Chat | Talk mode, levels, mute, sounds, keys, its pages |
@@ -142,14 +143,16 @@ Horizon has ReplayMod's other half built in: its **Replay Studio** (Options > Ho
 Replay Studio) lists your recordings and plays them back, with a timeline, a free camera,
 keyframes and camera paths, and the recordings are `.mcpr`, ReplayMod's own format. What it
 lacks is an easy way to record: only the `/studio record` chat command. The **Replay** module
-(Utility tab, off to start with) adds that:
+(Utility tab) adds that:
 
 - **F7** starts a recording, and stops and saves it.
-- **Record by itself:** with the module on, a recording starts when you join a server, a single
-  player world, or both (everywhere to start with). Stopping one by hand keeps it stopped until
-  you next join.
-- **REC** on the HUD while it records, with how long (movable like any element), and its status
-  and size on the module's page.
+- **Record by itself:** a recording can start a few seconds after you join a server, a single
+  player world, or both (off to start with). Stopping one by hand keeps it stopped until you
+  next join.
+- A recording starts only once you've fully joined the world, so it begins with the world loaded.
+- **REC** and how long it has run show on the HUD while it records: that's the **Recording
+  Indicator** module (HUD tab), which you switch off, move and resize like any element. The
+  Replay module's page shows the status and size.
 - Leaving the world saves the recording. They go in `recordings/` in the game folder.
 
 ### F3, the chat and containers
