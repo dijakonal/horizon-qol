@@ -48,6 +48,7 @@ pub enum Id {
     Replay,
     RecIndicator,
     Wardrobe,
+    Fullbright,
     /// Toggle Sprint & Sneak (its key is Toggle Sprint's, from before the two were one).
     ToggleSprint,
     Zoom,
@@ -77,6 +78,7 @@ impl Id {
             Id::Replay => "replay",
             Id::RecIndicator => "rec_indicator",
             Id::Wardrobe => "wardrobe",
+            Id::Fullbright => "fullbright",
             Id::ToggleSprint => "toggle_sprint",
             Id::Zoom => "zoom",
             Id::ShulkerPreview => "shulker_preview",
@@ -102,6 +104,7 @@ pub const MAP_SPRINT: &str = "toggle_sprint";
 pub const MAP_SNEAK: &str = "toggle_sneak";
 pub const MAP_FREECAM: &str = "freecam";
 pub const MAP_RECORD: &str = "record";
+pub const MAP_FULLBRIGHT: &str = "fullbright";
 
 /// Where a HUD element sits: its top left as a fraction of the screen, so it keeps its place when
 /// the window or the GUI scale changes. Its size comes from its content times its scale setting.
@@ -550,6 +553,23 @@ pub fn defaults() -> Vec<Module> {
                 Setting::info(
                     "freecam_note",
                     "Space and Shift go up and down, Sprint doubles the speed",
+                ),
+            ],
+        ),
+        Module::new(
+            Id::Fullbright,
+            "Fullbright",
+            "Everything at full light: caves, nights and the nether, in single player and on \
+             servers. Its key switches it on and off.",
+            Utility,
+            0xFFFACC15,
+            false,
+            None,
+            vec![
+                Setting::bind(MAP_FULLBRIGHT, "Toggle key"),
+                Setting::info(
+                    "fullbright_note",
+                    "Some servers' rules forbid fullbright: check before you use it there",
                 ),
             ],
         ),

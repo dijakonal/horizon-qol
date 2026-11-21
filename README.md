@@ -37,6 +37,7 @@ cancels, Backspace leaves it unbound, a right-click puts back the default).
 | Open Mod Menu | Right Shift | Opens the HUD editor |
 | Zoom | C | Zooms while held, or on and off in Toggle mode |
 | Freecam | F6 | Freecam on or off |
+| Fullbright | not bound | Fullbright on or off |
 | Start / Stop Recording | F7 | Starts a recording for Replay Studio, or stops and saves it |
 | Toggle Sprint | Y | Sprinting on or off, while Toggle Sprint & Sneak is on |
 | Toggle Sneak | not bound | Sneaking on or off, while Toggle Sprint & Sneak is on |
@@ -67,6 +68,7 @@ cancels, Backspace leaves it unbound, a right-click puts back the default).
 | Toggle Sprint & Sneak | Its keys switch sprinting and sneaking on and off | Each on or off, their keys, status on the HUD, keep sprinting after a restart |
 | Scoreboard | The server's sidebar scoreboard as a HUD element you can move and resize | Score numbers (off to start with), title, text shadow, background colour and opacity, title band |
 | Freecam | Its key (F6) flies the camera away from your player, through blocks; your player stays still | Key, speed, level or where-you-look flight, see your player, clear water and lava fog |
+| Fullbright | Everything at full light, single player and servers alike (Horizon's own holds itself off on servers) | Toggle key (not bound to start with) |
 | Skins & Capes | The skin manager: imported skins and capes, and your account's | Button on the pause menu |
 | Replay | Records what you play for Horizon's Replay Studio, as ReplayMod does | Record key, record by itself (off, servers, single player, everywhere), chat messages |
 | Recording Indicator | REC and how long, on the HUD, while Replay records | Show the time, and the look every element has |
@@ -309,7 +311,7 @@ src/voice/                voice chat: its engine, settings file, Opus codec (opu
 src/profiles.rs           profiles: their text (what Export copies), names and files
 src/previews.rs           shulker box and ender chest previews: reading their items, the slot grid, the saved ender chests
 src/ui.rs                 the screen: the HUD editor and the mod menu
-src/mixins/               the mod's own game-side code: the Config button, the logo on the Mods page, the scoreboard,
+src/mixins/               the mod's own game-side code: the Config button, the logo on the Mods page, the scoreboard, fullbright,
                           the skin manager (drawing your skin and cape, Mojang's profile API, dropped files)
 src/scoreboard.rs         the Scoreboard module's look, for its game-side code
 src/wardrobe.rs           the skin manager's shared state (with its game side), image sizes and the front view's pixels

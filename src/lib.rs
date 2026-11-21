@@ -68,6 +68,14 @@ fn pause_button_rect(size: [f32; 2]) -> [f32; 4] {
     [6.0, size[1] - 26.0, 96.0, 20.0]
 }
 
+/// The Fullbright module is on: the game-side code keeps the renderer's full-light lightmap on.
+static FULLBRIGHT: AtomicBool = AtomicBool::new(false);
+
+/// For the game: whether to draw at full light.
+pub fn fullbright() -> bool {
+    FULLBRIGHT.load(Ordering::Relaxed)
+}
+
 /// The PNG of the mod's logo, for the Mods screen: the game shows no icon for a native mod
 /// itself, so the mod's game-side code (`src/mixins/mod_icon.rs`) gives it this one.
 pub const ICON_PNG: &[u8] = include_bytes!("../icon.png");
@@ -95,6 +103,7 @@ const SPRINT_KEY: &str = "key.keyboard.y";
 const SNEAK_KEY: &str = "key.keyboard.unknown";
 const FREECAM_KEY: &str = "key.keyboard.f6";
 const RECORD_KEY: &str = "key.keyboard.f7";
+const FULLBRIGHT_KEY: &str = "key.keyboard.unknown";
 /// How long a let-go key takes to fade out in Keystrokes, in milliseconds.
 const FADE_MS: f32 = 160.0;
 /// The config file, under the game's `config/` folder.
@@ -345,13 +354,14 @@ fn save_config(host: &dyn ClientHost, state: &State) {
 }
 
 /// The mod's Controls mappings, in the order the menu lists them.
-const MAPPINGS: [&str; 11] = [
+const MAPPINGS: [&str; 12] = [
     OPEN_MENU,
     ZOOM,
     modules::MAP_SPRINT,
     modules::MAP_SNEAK,
     modules::MAP_FREECAM,
     modules::MAP_RECORD,
+    modules::MAP_FULLBRIGHT,
     voice::engine::KEY_MENU,
     voice::engine::KEY_PTT,
     voice::engine::KEY_WHISPER,
@@ -1348,6 +1358,11 @@ impl Hooks for HorizonQol {
                 .context(KeyConflictContext::InGame),
         );
         r.register_key_mapping(
+            KeyRegistration::new(modules::MAP_FULLBRIGHT, FULLBRIGHT_KEY)
+                .label("key.horizon_qol.fullbright")
+                .context(KeyConflictContext::InGame),
+        );
+        r.register_key_mapping(
             KeyRegistration::new(modules::MAP_RECORD, RECORD_KEY)
                 .label("key.horizon_qol.record")
                 .context(KeyConflictContext::InGame),
@@ -1478,13 +1493,21 @@ impl Hooks for HorizonQol {
             }
             n % 2 == 1
         };
-        let (sprint_key, sneak_key, zoom_key, freecam_key, record_key) = (
+        let (sprint_key, sneak_key, zoom_key, freecam_key, record_key, fullbright_key) = (
             flip(modules::MAP_SPRINT),
             flip(modules::MAP_SNEAK),
             flip(ZOOM),
             flip(modules::MAP_FREECAM),
             flip(modules::MAP_RECORD),
+            flip(modules::MAP_FULLBRIGHT),
         );
+        // Fullbright's key switches the module, which the game-side code reads.
+        if fullbright_key && let Some(m) = state.modules.iter_mut().find(|m| m.id == Id::Fullbright)
+        {
+            m.enabled = !m.enabled;
+            save_config(host, state);
+        }
+        FULLBRIGHT.store(state.on(Id::Fullbright), Ordering::Relaxed);
         freecam_tick(host, state, freecam_key);
         replay_tick(host, state, record_key);
         let toggles = state.module(Id::ToggleSprint);
@@ -1962,6 +1985,7 @@ impl Hooks for HorizonQol {
             ("hud_note", " ".to_owned(), 0),
             ("freecam_note", " ".to_owned(), 0),
             ("wardrobe_note", " ".to_owned(), 0),
+            ("fullbright_note", " ".to_owned(), 0),
             replay_status,
             ("replay_note", " ".to_owned(), 0),
             (

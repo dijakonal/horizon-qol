@@ -155,3 +155,14 @@ helper = "src/mixins/file_drop.rs"
 bindings = [
   { name = "event", ty = "&winit::event::WindowEvent", value = "&event" },
 ]
+
+# The Fullbright module: the renderer's full-light lightmap, on every world and server.
+[[native.mixin]]
+id = "fullbright"
+target = "horizon_client::game::options::Game<'_>::hold_fullbright"
+kind = "HEAD"
+cancellable = true
+helper = "src/mixins/fullbright.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+]
