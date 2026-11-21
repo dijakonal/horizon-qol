@@ -101,11 +101,12 @@ bindings = [
   { name = "out", ty = "&mut Vec<horizon_client::mesher::Vertex>", value = "&mut *out" },
 ]
 
-# The Mods screen lists native mods without their icon.png: Horizon QoL's row gets its logo.
+# The Mods screen lists native mods without their icon.png: Horizon QoL's row gets its logo,
+# just before each native mod's settings are read (the mods' info is filled in by then).
 [[native.mixin]]
 id = "mod_icon"
 target = "horizon_client::game::native_hooks::Game<'_>::list_native_mods"
-kind = "AFTER_CALL"
+kind = "BEFORE_CALL"
 selector = "self.native_page_settings"
 require = 1
 ordinal = 0
