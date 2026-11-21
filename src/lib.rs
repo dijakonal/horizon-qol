@@ -17,10 +17,13 @@ pub mod replay;
 /// The sidebar scoreboard's look, public for its game-side code (`src/mixins/scoreboard.rs`).
 pub mod scoreboard;
 mod settings;
+mod skin_manager;
 mod ui;
 /// Voice chat, public so its game-side code (`[[native.mixin]]`) reaches it as
 /// `mod_horizon_qol::voice`.
 pub mod voice;
+/// The skin manager's shared state, public for its game-side code (`src/mixins/wardrobe.rs`).
+pub mod wardrobe;
 
 use mod_api::text::TextContent;
 use mod_api::{
@@ -46,6 +49,8 @@ pub const MOD_ID: &str = ID;
 
 /// The next time the mod screen opens without the menu key, it opens on the mod menu.
 static OPEN_ON_MENU: AtomicBool = AtomicBool::new(false);
+/// The pause menu's Skins & Capes button was pressed: the next client tick opens the skin manager.
+static OPEN_WARDROBE: AtomicBool = AtomicBool::new(false);
 /// The Config button opens the mod menu rather than the HUD editor (the mod's setting).
 static CONFIG_OPENS_MENU: AtomicBool = AtomicBool::new(false);
 
@@ -55,6 +60,12 @@ static CONFIG_OPENS_MENU: AtomicBool = AtomicBool::new(false);
 pub fn config_button() {
     OPEN_ON_MENU.store(CONFIG_OPENS_MENU.load(Ordering::Relaxed), Ordering::Relaxed);
     voice::screen_taken();
+}
+
+/// Where the pause menu's Skins & Capes button is, on a screen `size` GUI pixels: its bottom
+/// left corner, clear of the game's buttons.
+fn pause_button_rect(size: [f32; 2]) -> [f32; 4] {
+    [6.0, size[1] - 26.0, 96.0, 20.0]
 }
 
 /// The PNG of the mod's logo, for the Mods screen: the game shows no icon for a native mod
@@ -136,6 +147,8 @@ struct State {
     replay_was: Option<replay::Status>,
     /// Ticks since joining the world: Replay records by itself once the world has loaded.
     replay_ticks: u32,
+    /// The skin manager's imported skins and capes, and the ones picked.
+    wardrobe: skin_manager::Wardrobe,
     /// The profile in use, by name: changes save to it too.
     active_profile: Option<String>,
     /// The saved profiles: name and file name, by name.
@@ -186,6 +199,7 @@ impl HorizonQol {
             replay_session: None,
             replay_was: None,
             replay_ticks: 0,
+            wardrobe: skin_manager::Wardrobe::default(),
             zoom_toggled: false,
             zoom: None,
             voice_synced: None,
@@ -226,6 +240,14 @@ impl HorizonQol {
         let state = guard.as_mut()?;
         let gui = state.gui.get_or_insert_with(new_gui);
         Some(f(gui, &mut state.modules))
+    }
+
+    /// The pause menu shows the Skins & Capes button.
+    fn pause_button_shown(&self) -> bool {
+        self.state().as_ref().is_some_and(|s| {
+            let m = s.module(Id::Wardrobe);
+            m.enabled && m.bool("pause_button")
+        })
     }
 
     /// Opens the screen on the HUD editor. False when it could not open.
@@ -269,6 +291,7 @@ fn load_config(host: &dyn ClientHost, state: &mut State) {
         let text = String::from_utf8_lossy(&bytes);
         modules::load(&mut state.modules, &text);
         let lines = settings::parse(&text);
+        skin_manager::load(state, &lines);
         state.sprint_toggled = state.module(Id::ToggleSprint).bool("remember")
             && lines.iter().any(|(k, v)| k == SPRINT_STATE && v == "true");
         if let Some(layout) = lines
@@ -307,6 +330,7 @@ fn save_config(host: &dyn ClientHost, state: &State) {
         let mut text = modules::save(&state.modules);
         text += &format!("{SPRINT_STATE}={}\n", state.sprint_toggled);
         text += &format!("{DETECTED_LAYOUT}={}\n", state.data.auto_layout.name());
+        text += &skin_manager::save(state);
         if let Some(name) = &state.active_profile {
             text += &format!("{ACTIVE_PROFILE}={name}\n");
         }
@@ -1340,6 +1364,16 @@ impl Hooks for HorizonQol {
             .state()
             .as_mut()
             .and_then(|s| s.gui.as_mut().and_then(|g| g.action.take()));
+        // The Skins & Capes module's button: the skin manager, in the same screen.
+        let action = match action {
+            Some("wardrobe") => {
+                if let Some(gui) = self.state().as_mut().and_then(|s| s.gui.as_mut()) {
+                    gui.open_wardrobe();
+                }
+                None
+            }
+            other => other,
+        };
         if let Some(action) = action {
             if let Some(state) = self.state().as_mut()
                 && state.gui.as_ref().is_some_and(|g| g.dirty)
@@ -1357,6 +1391,18 @@ impl Hooks for HorizonQol {
         }
         if self.close.swap(false, Ordering::Relaxed) && !voice::menu_open(host) {
             host.mod_screen_close(ID);
+        }
+        // The pause menu's Skins & Capes button: out of the pause menu, into the skin manager.
+        if OPEN_WARDROBE.swap(false, Ordering::Relaxed) && host.mod_screen().is_none() {
+            host.close_screen();
+            if host.mod_screen_open(ID) {
+                voice::screen_taken();
+                if let Some(state) = self.state().as_mut() {
+                    let mut gui = ui::Gui::new(ui::View::Menu);
+                    gui.open_wardrobe();
+                    state.gui = Some(gui);
+                }
+            }
         }
         // The Controls mapping's presses. `input_key` normally opened the screen at the press
         // already, and opening a screen drops the mapping's pending clicks, so this only acts
@@ -1382,6 +1428,7 @@ impl Hooks for HorizonQol {
             load_config(host, state);
         }
         read_player(host, state);
+        skin_manager::tick(host, state);
         sync_voice(state);
         voice_sounds(host, state, voice::engine::qol::snapshot());
         voice_slots(host, state);
@@ -1806,6 +1853,15 @@ impl Hooks for HorizonQol {
     }
 
     fn screen_render_post(&self, host: &dyn ClientHost, event: &mut ScreenRenderPostEvent<'_>) {
+        if event.screen.id == "paused" {
+            if self.pause_button_shown() {
+                let size = event.draw.size();
+                let r = pause_button_rect(size);
+                let hover = ui::inside(r, event.screen.mouse);
+                ui::draw_pause_button(&mut *event.draw, r, hover);
+            }
+            return;
+        }
         if is_ender_chest_screen(event.screen.title) {
             remember_ender_chest(host);
             return;
@@ -1825,6 +1881,23 @@ impl Hooks for HorizonQol {
         let Some(state) = guard.as_mut() else {
             return;
         };
+        // The skin manager: its files and account when it opens, what it asked, what it shows.
+        let gui = state.gui.get_or_insert_with(new_gui);
+        let opened = std::mem::take(&mut gui.wardrobe_wanted);
+        let asked = gui.wardrobe_action.take();
+        let showing = gui.wardrobe_open();
+        if opened {
+            skin_manager::opened(host, state);
+        }
+        if let Some(asked) = asked {
+            skin_manager::act(host, state, asked);
+        }
+        if showing {
+            let view = skin_manager::view(state);
+            if let Some(gui) = state.gui.as_mut() {
+                gui.wardrobe = Some(view);
+            }
+        }
         // The profiles page: its list when it opens, and what it asked for.
         let gui = state.gui.get_or_insert_with(new_gui);
         let wanted = std::mem::take(&mut gui.profiles_wanted);
@@ -1888,6 +1961,7 @@ impl Hooks for HorizonQol {
             ("voice_group", group.0, group.1),
             ("hud_note", " ".to_owned(), 0),
             ("freecam_note", " ".to_owned(), 0),
+            ("wardrobe_note", " ".to_owned(), 0),
             replay_status,
             ("replay_note", " ".to_owned(), 0),
             (
@@ -1913,6 +1987,14 @@ impl Hooks for HorizonQol {
         event: &mut ScreenMouseButtonPressedPreEvent<'_>,
     ) -> Flow {
         let (at, button) = (event.screen.mouse, event.button);
+        if event.screen.id == "paused" {
+            let size = [event.screen.rect[2], event.screen.rect[3]];
+            if button == 0 && self.pause_button_shown() && ui::inside(pause_button_rect(size), at) {
+                OPEN_WARDROBE.store(true, Ordering::Relaxed);
+                return Flow::Cancel;
+            }
+            return Flow::Continue;
+        }
         if voice::menu_open(host) {
             return voice::mouse_pressed(host, at, button);
         }

@@ -47,6 +47,7 @@ pub enum Id {
     Freecam,
     Replay,
     RecIndicator,
+    Wardrobe,
     /// Toggle Sprint & Sneak (its key is Toggle Sprint's, from before the two were one).
     ToggleSprint,
     Zoom,
@@ -75,6 +76,7 @@ impl Id {
             Id::Freecam => "freecam",
             Id::Replay => "replay",
             Id::RecIndicator => "rec_indicator",
+            Id::Wardrobe => "wardrobe",
             Id::ToggleSprint => "toggle_sprint",
             Id::Zoom => "zoom",
             Id::ShulkerPreview => "shulker_preview",
@@ -548,6 +550,24 @@ pub fn defaults() -> Vec<Module> {
                 Setting::info(
                     "freecam_note",
                     "Space and Shift go up and down, Sprint doubles the speed",
+                ),
+            ],
+        ),
+        Module::new(
+            Id::Wardrobe,
+            "Skins & Capes",
+            "Your skin and cape: imported ones (drag a PNG onto the window), or your account's. \
+             Open it from the pause menu.",
+            Utility,
+            0xFF0EA5E9,
+            true,
+            None,
+            vec![
+                Setting::action("wardrobe", "Skin manager", "Open"),
+                Setting::toggle("pause_button", "Button on the pause menu", true),
+                Setting::info(
+                    "wardrobe_note",
+                    "Imported capes show only to you; an uploaded skin, to everyone",
                 ),
             ],
         ),

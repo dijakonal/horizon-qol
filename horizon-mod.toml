@@ -126,3 +126,33 @@ bindings = [
   { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
   { name = "batch", ty = "&mut horizon_client::hud::HudBatch", value = "&mut *batch" },
 ]
+
+# The skin manager: its game side (drawing the picked skin and cape, the account's skin and
+# capes through Mojang's API), the hook that draws them, and files dropped on the window.
+[[native.module]]
+id = "wardrobe"
+file = "crates/horizon-client/src/game/network/remote/mod.rs"
+name = "qol_wardrobe"
+source = "src/mixins/wardrobe_module.rs"
+
+[[native.mixin]]
+id = "wardrobe_draw"
+target = "horizon_client::game::remote::Game<'_>::update_remote_skins"
+kind = "BEFORE_CALL"
+selector = "self.remote.as_mut"
+require = 2
+ordinal = 1
+helper = "src/mixins/wardrobe_draw.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+]
+
+[[native.mixin]]
+id = "file_drop"
+target = "horizon_client::game::window_handler::Game<'_>::handle_window_event"
+kind = "HEAD"
+cancellable = true
+helper = "src/mixins/file_drop.rs"
+bindings = [
+  { name = "event", ty = "&winit::event::WindowEvent", value = "&event" },
+]

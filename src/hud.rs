@@ -419,6 +419,7 @@ pub fn content(m: &Module, data: &HudData) -> Option<Content> {
         Id::RecIndicator => data.recording.and_then(|ms| lines(vec![rec_text(m, ms)])),
         // The game draws the scoreboard (the scores are its): see `scoreboard::place`.
         Id::Scoreboard
+        | Id::Wardrobe
         | Id::Replay
         | Id::Freecam
         | Id::Zoom

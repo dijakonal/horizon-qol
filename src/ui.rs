@@ -125,6 +125,16 @@ enum Target {
     ProfileLoad(usize),
     ProfileExport(usize),
     ProfileDelete(usize),
+    /// The sidebar's Skins & Capes button.
+    Wardrobe,
+    /// Skin tile `i` (0 is the account's), cape tile `i` (0 is none, then the account's, then
+    /// imported ones).
+    WardrobeSkin(usize),
+    WardrobeCape(usize),
+    WardrobeSlim(bool),
+    WardrobeUpload,
+    WardrobePaste,
+    WardrobeRefresh,
 }
 
 /// What the screen shows.
@@ -140,6 +150,7 @@ enum Page {
     Grid,
     Options(usize),
     Profiles,
+    Wardrobe,
 }
 
 /// Something to do with the profiles, for the mod to do (it has the files and the clipboard).
@@ -229,6 +240,15 @@ pub struct Gui {
     confirm_delete: Option<usize>,
     /// Shift is held: a corner drag stretches the element instead of scaling it.
     pub shift: bool,
+    /// The skin manager's page, as the mod fills it in, and what it asks for.
+    pub wardrobe: Option<WardrobeView>,
+    pub wardrobe_action: Option<WardrobeAction>,
+    /// The page opened: the mod reads the files and the account again.
+    pub wardrobe_wanted: bool,
+    /// The pointer is over the capes: a file dropped there is a cape.
+    pub wardrobe_cape_zone: bool,
+    /// The imported skin or cape whose delete waits for a second right-click.
+    wardrobe_confirm: Option<(bool, usize)>,
 }
 
 impl Gui {
@@ -263,7 +283,27 @@ impl Gui {
             profile_action: None,
             confirm_delete: None,
             shift: false,
+            wardrobe: None,
+            wardrobe_action: None,
+            wardrobe_wanted: false,
+            wardrobe_cape_zone: false,
+            wardrobe_confirm: None,
         }
+    }
+
+    /// Opens the menu on the skin manager.
+    pub fn open_wardrobe(&mut self) {
+        self.view = View::Menu;
+        self.page = Page::Wardrobe;
+        self.scroll = 0.0;
+        self.opened = Instant::now();
+        self.wardrobe_wanted = true;
+        self.note = None;
+    }
+
+    /// The skin manager's page is open.
+    pub fn wardrobe_open(&self) -> bool {
+        self.view == View::Menu && self.page == Page::Wardrobe
     }
 
     /// Opens the menu straight on module `index`'s options.
@@ -275,7 +315,7 @@ impl Gui {
     }
 }
 
-fn inside(r: [f32; 4], p: [f32; 2]) -> bool {
+pub fn inside(r: [f32; 4], p: [f32; 2]) -> bool {
     p[0] >= r[0] && p[0] < r[0] + r[2] && p[1] >= r[1] && p[1] < r[1] + r[3]
 }
 
@@ -808,6 +848,14 @@ impl Gui {
             p.text(&count, [r[0] + r[2] - cw - 8.0, ty], theme::TEXT_FAINT);
             self.hit(r, Target::Tab(tab));
         }
+        let wardrobe = [px + 6.0, body_y + body_h - 74.0, SIDEBAR_W - 12.0, 20.0];
+        p.button(
+            wardrobe,
+            "Skins",
+            hover(Target::Wardrobe) || self.page == Page::Wardrobe,
+            false,
+        );
+        self.hit(wardrobe, Target::Wardrobe);
         let profiles = [px + 6.0, body_y + body_h - 50.0, SIDEBAR_W - 12.0, 20.0];
         p.button(
             profiles,
@@ -834,6 +882,7 @@ impl Gui {
             Page::Grid => self.draw_grid(p, content, modules, hover),
             Page::Options(i) => self.draw_options(p, content, modules, i, hover),
             Page::Profiles => self.draw_profiles(p, content, hover),
+            Page::Wardrobe => self.draw_wardrobe(p, content, mouse, hover),
         }
         self.clip = None;
         if clipped {
@@ -1408,6 +1457,19 @@ impl Gui {
             }
             return true;
         }
+        if self.page == Page::Wardrobe
+            && matches!(
+                target,
+                Target::WardrobeSkin(_)
+                    | Target::WardrobeCape(_)
+                    | Target::WardrobeSlim(_)
+                    | Target::WardrobeUpload
+                    | Target::WardrobePaste
+                    | Target::WardrobeRefresh
+            )
+        {
+            return self.wardrobe_press(target, button);
+        }
         if button == 1 {
             // Right-click on an element opens its settings.
             if let Target::Element(i) | Target::Handle { module: i, .. } = target {
@@ -1555,6 +1617,13 @@ impl Gui {
                     self.profile_name.clear();
                 }
             }
+            Target::Wardrobe => self.open_wardrobe(),
+            Target::WardrobeSkin(_)
+            | Target::WardrobeCape(_)
+            | Target::WardrobeSlim(_)
+            | Target::WardrobeUpload
+            | Target::WardrobePaste
+            | Target::WardrobeRefresh => {}
             Target::ProfileExportCurrent => self.profile_action = Some(ProfileAction::Export(None)),
             Target::ProfileImport => self.profile_action = Some(ProfileAction::Import),
             Target::ProfileLoad(i) => self.profile_action = Some(ProfileAction::Load(i)),
@@ -1853,6 +1922,32 @@ pub fn key_label(key: &str) -> String {
     } else {
         label
     }
+}
+
+mod wardrobe;
+pub use wardrobe::{WardrobeAction, WardrobeView};
+
+/// The pause menu's Skins & Capes button, in rectangle `r`: the logo and the label.
+pub fn draw_pause_button(draw: &mut dyn DrawContext, r: [f32; 4], hover: bool) {
+    let mut p = Paint { draw, k: 1.0 };
+    p.rounded(
+        [r[0] - 1.0, r[1] - 1.0, r[2] + 2.0, r[3] + 2.0],
+        if hover { theme::ACCENT } else { theme::BORDER },
+    );
+    p.rounded(
+        r,
+        if hover {
+            theme::BUTTON_HOVER
+        } else {
+            theme::PANEL
+        },
+    );
+    p.logo([r[0] + 4.0, r[1] + (r[3] - 16.0) / 2.0], 1.0);
+    p.text(
+        "Skins & Capes",
+        [r[0] + 24.0, r[1] + (r[3] - LINE) / 2.0 + 1.0],
+        theme::TEXT,
+    );
 }
 
 #[cfg(test)]

@@ -1,4 +1,6 @@
 fn voicechat_tick(game: &mut crate::game::Game<'_>) {
+    // Horizon QoL's skin manager: the game's PNG decoder for its previews, and its account jobs.
+    crate::game::remote::qol_wardrobe::tick();
     // Keys chosen in Horizon QoL's menu: bound and saved as Options > Controls does.
     let rebinds = mod_horizon_qol::take_rebinds();
     if !rebinds.is_empty() {

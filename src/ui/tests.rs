@@ -1014,3 +1014,79 @@ fn profiles_page_names_saves_and_confirms_deletes() {
     assert!(g.mouse_pressed(del, 0, &mut mods));
     assert_eq!(g.profile_action.take(), Some(ProfileAction::Delete(0)));
 }
+
+#[test]
+fn the_skin_manager_shows_skins_and_capes_and_picks_them() {
+    use crate::wardrobe::Image;
+    // A skin in two colours (head and the rest) and a red cape.
+    let mut skin = Image {
+        w: 64,
+        h: 64,
+        rgba: [0x3A, 0x6E, 0xA5, 0xFF].repeat(64 * 64),
+    };
+    for y in 8..16 {
+        for x in 8..16 {
+            skin.rgba[(y * 64 + x) * 4..(y * 64 + x) * 4 + 4]
+                .copy_from_slice(&[0xD9, 0xA0, 0x66, 0xFF]);
+        }
+    }
+    for y in 0..64 {
+        for x in 0..64 {
+            let outer =
+                (y < 16 && x >= 32) || (32..48).contains(&y) || (y >= 48 && !(16..48).contains(&x));
+            if outer {
+                skin.rgba[(y * 64 + x) * 4 + 3] = 0;
+            }
+        }
+    }
+    let cape = Image {
+        w: 64,
+        h: 32,
+        rgba: [0xB0, 0x2E, 0x26, 0xFF].repeat(64 * 32),
+    };
+    let mut mods = modules::defaults();
+    let mut g = gui(View::Menu);
+    frame(&mut g, SIZE, [0.0, 0.0], &mods, "menu-before-skins");
+    assert!(g.mouse_pressed(centre_of(&g, Target::Wardrobe), 0, &mut mods));
+    assert!(g.wardrobe_wanted && g.wardrobe_open());
+    g.opened = Instant::now() - Duration::from_secs(1);
+    g.wardrobe = Some(WardrobeView {
+        skins: vec![("Knight.png".into(), Some(skin.clone()))],
+        capes: vec![("Red_Cape.png".into(), Some(cape.clone()))],
+        official: vec![("Migrator".into(), Some(cape), true)],
+        account_skin: Some(skin),
+        skin: Some(0),
+        cape: Some(0),
+        account: ("Signed in as Steve".into(), 0xFF55FF55),
+        online: true,
+        ..WardrobeView::default()
+    });
+    let r = frame(&mut g, SIZE, [0.0, 0.0], &mods, "skins");
+    assert!(r.texts.iter().any(|(t, _)| t == "SKINS"));
+    assert!(r.texts.iter().any(|(t, _)| t == "Upload"));
+    // Tiles: the account's skin, the imported one; no cape, the account's, the imported one.
+    assert!(g.mouse_pressed(centre_of(&g, Target::WardrobeSkin(0)), 0, &mut mods));
+    assert_eq!(g.wardrobe_action.take(), Some(WardrobeAction::Skin(None)));
+    assert!(g.mouse_pressed(centre_of(&g, Target::WardrobeCape(1)), 0, &mut mods));
+    assert_eq!(
+        g.wardrobe_action.take(),
+        Some(WardrobeAction::OfficialCape(Some(0)))
+    );
+    assert!(g.mouse_pressed(centre_of(&g, Target::WardrobeCape(2)), 0, &mut mods));
+    assert_eq!(
+        g.wardrobe_action.take(),
+        Some(WardrobeAction::CustomCape(0))
+    );
+    // Deleting an imported one takes two right-clicks; the account's can't be.
+    assert!(!g.mouse_pressed(centre_of(&g, Target::WardrobeCape(1)), 1, &mut mods));
+    assert!(g.mouse_pressed(centre_of(&g, Target::WardrobeCape(2)), 1, &mut mods));
+    assert_eq!(g.wardrobe_action, None);
+    assert!(g.mouse_pressed(centre_of(&g, Target::WardrobeCape(2)), 1, &mut mods));
+    assert_eq!(
+        g.wardrobe_action.take(),
+        Some(WardrobeAction::Delete {
+            cape: true,
+            index: 0
+        })
+    );
+}
