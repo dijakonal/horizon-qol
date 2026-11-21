@@ -49,6 +49,7 @@ pub enum Id {
     RecIndicator,
     Wardrobe,
     Fullbright,
+    TabFix,
     /// Toggle Sprint & Sneak (its key is Toggle Sprint's, from before the two were one).
     ToggleSprint,
     Zoom,
@@ -79,6 +80,7 @@ impl Id {
             Id::RecIndicator => "rec_indicator",
             Id::Wardrobe => "wardrobe",
             Id::Fullbright => "fullbright",
+            Id::TabFix => "tab_fix",
             Id::ToggleSprint => "toggle_sprint",
             Id::Zoom => "zoom",
             Id::ShulkerPreview => "shulker_preview",
@@ -658,6 +660,17 @@ pub fn defaults() -> Vec<Module> {
                     "{}px",
                 ),
             ],
+        ),
+        Module::new(
+            Id::TabFix,
+            "Inventory Tab Fix",
+            "Tab doesn't select the recipe book (or another button) in your inventory and \
+             containers, so a key on Tab works there without it.",
+            Inventory,
+            0xFF64748B,
+            true,
+            None,
+            vec![],
         ),
         Module::new(
             Id::EnderPreview,

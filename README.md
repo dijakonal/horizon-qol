@@ -76,6 +76,7 @@ cancels, Backspace leaves it unbound, a right-click puts back the default).
 | HUD | Every HUD element on or off, and their rule for F3 and the chat | When F3 is open, when the chat is open |
 | Voice Chat | Proximity voice chat on servers that run Simple Voice Chat | Talk mode, levels, mute, sounds, keys, its pages |
 | Voice Status, Voice Group, Voice Speakers | Voice chat's HUD | Icon or icon and text (status), scale, background, most players, names |
+| Inventory Tab Fix | Tab doesn't select the recipe book (or another button) in inventories and containers, so a key on Tab works there | On or off |
 | Shulker Preview | A shulker box's tooltip shows its items as a grid of slots instead of the game's list, in the box's colour | Always or hold Shift, coloured tooltip, hide the game's list, Shift hint |
 | Ender Chest Preview | An ender chest's tooltip shows your ender chest as it was when you last opened one | Always or hold Shift, when it was last seen, Shift hint |
 

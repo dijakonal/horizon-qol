@@ -2077,6 +2077,15 @@ impl Hooks for HorizonQol {
         host: &dyn ClientHost,
         event: &mut ScreenKeyPressedPreEvent<'_>,
     ) -> Flow {
+        // In an inventory or a container, Tab moves the keyboard's focus to the recipe book
+        // (vanilla's Tab navigation): with Inventory Tab Fix on, the screen doesn't take it. The
+        // key still reaches the key mappings bound to it, which the game hands it separately.
+        if event.key == "key.keyboard.tab"
+            && (CONTAINER_SCREENS.contains(&event.screen.id) || event.screen.menu.is_some())
+            && self.state().as_ref().is_some_and(|s| s.on(Id::TabFix))
+        {
+            return Flow::Cancel;
+        }
         if host.mod_screen() != Some(ID) {
             return Flow::Continue;
         }
