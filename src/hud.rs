@@ -414,7 +414,10 @@ pub fn content(m: &Module, data: &HudData) -> Option<Content> {
             (!shown.is_empty()).then(|| lines(shown)).flatten()
         }
         // The voice HUD is drawn by the game (it has the players' faces): see `voice::hud_place`.
-        Id::Zoom
+        // The game draws the scoreboard (the scores are its): see `scoreboard::place`.
+        Id::Scoreboard
+        | Id::Freecam
+        | Id::Zoom
         | Id::ShulkerPreview
         | Id::EnderPreview
         | Id::VoiceChat
@@ -442,6 +445,27 @@ pub fn editor_content(m: &Module, data: &HudData) -> Option<Content> {
             faces: false,
             names: m.choice("style") == 1,
         }),
+        Id::Scoreboard => {
+            let numbers = m.bool("numbers");
+            let line = |name: &str, n: u32| {
+                if numbers {
+                    format!("{name}  {n}")
+                } else {
+                    name.to_owned()
+                }
+            };
+            let mut rows = Vec::new();
+            if m.bool("title") {
+                rows.push("Scoreboard".to_owned());
+            }
+            rows.extend([
+                line("Kills: 12", 4),
+                line("Coins: 3,400", 3),
+                line("Online: 24", 2),
+                line("play.example.net", 1),
+            ]);
+            Some(Content::Lines(rows))
+        }
         Id::VoiceGroup => Some(Content::Voice {
             rows: vec![row("Group: Friends", 0xFF55FF55, Some(VOICE_GROUP))],
             faces: false,
@@ -612,8 +636,8 @@ pub fn measure(m: &Module, content: &Content, width: &dyn Fn(&str) -> f32) -> [f
 
 /// Where an element of `size` (unscaled) sits on a screen of `screen` GUI pixels:
 /// `[x, y, w, h]`, kept on the screen.
-pub fn rect(place: Place, scale: f32, size: [f32; 2], screen: [f32; 2]) -> [f32; 4] {
-    let (w, h) = (size[0] * scale, size[1] * scale);
+pub fn rect(place: Place, scale: [f32; 2], size: [f32; 2], screen: [f32; 2]) -> [f32; 4] {
+    let (w, h) = (size[0] * scale[0], size[1] * scale[1]);
     let max_x = (screen[0] - w - MARGIN).max(MARGIN);
     let max_y = (screen[1] - h - MARGIN).max(MARGIN);
     let x = (place.x * screen[0]).clamp(MARGIN, max_x);
@@ -807,14 +831,15 @@ impl Look {
     }
 }
 
-/// Draws module `m`'s `content` with its top left at `at`, `scale` times its own size, with
+/// Draws module `m`'s `content` with its top left at `at`, `scale` times its own size (across,
+/// down), with
 /// key glows and the time from `data`.
 pub fn draw(
     draw: &mut dyn DrawContext,
     m: &Module,
     content: &Content,
     at: [f32; 2],
-    scale: f32,
+    scale: [f32; 2],
     data: &HudData,
 ) {
     let look = Look::of(m, data.now_ms);
@@ -836,7 +861,7 @@ pub fn draw(
     let mut o = Ops {
         ops: vec![GuiDraw::Push(vec![
             PoseOp::Translate(at[0], at[1]),
-            PoseOp::Scale(scale, scale),
+            PoseOp::Scale(scale[0], scale[1]),
         ])],
         shadow: m.bool("text_shadow"),
         width: &width,
@@ -976,8 +1001,15 @@ pub fn draw(
     let ops = std::mem::take(&mut o.ops);
     drop(o);
     let _ = draw.gui_paint(&ops);
+    // Items stay square: a stretched element's items keep the smaller scale, centred where
+    // they would be.
+    let s = scale[0].min(scale[1]);
     for (stack, [x, y]) in items {
-        draw.item_stack(&stack, [at[0] + x * scale, at[1] + y * scale], 16.0 * scale);
+        let at = [
+            at[0] + x * scale[0] + 8.0 * (scale[0] - s),
+            at[1] + y * scale[1] + 8.0 * (scale[1] - s),
+        ];
+        draw.item_stack(&stack, at, 16.0 * s);
     }
 }
 
@@ -1220,7 +1252,7 @@ mod tests {
     fn an_element_stays_on_the_screen() {
         let r = rect(
             Place { x: 0.99, y: -1.0 },
-            2.0,
+            [2.0, 2.0],
             [50.0, 20.0],
             [320.0, 180.0],
         );

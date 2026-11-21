@@ -43,6 +43,8 @@ pub enum Id {
     Armor,
     Effects,
     Clock,
+    Scoreboard,
+    Freecam,
     /// Toggle Sprint & Sneak (its key is Toggle Sprint's, from before the two were one).
     ToggleSprint,
     Zoom,
@@ -67,6 +69,8 @@ impl Id {
             Id::Armor => "armor",
             Id::Effects => "effects",
             Id::Clock => "clock",
+            Id::Scoreboard => "scoreboard",
+            Id::Freecam => "freecam",
             Id::ToggleSprint => "toggle_sprint",
             Id::Zoom => "zoom",
             Id::ShulkerPreview => "shulker_preview",
@@ -90,6 +94,7 @@ pub const MAP_OPEN_MENU: &str = "open_menu";
 pub const MAP_ZOOM: &str = "zoom";
 pub const MAP_SPRINT: &str = "toggle_sprint";
 pub const MAP_SNEAK: &str = "toggle_sneak";
+pub const MAP_FREECAM: &str = "freecam";
 
 /// Where a HUD element sits: its top left as a fraction of the screen, so it keeps its place when
 /// the window or the GUI scale changes. Its size comes from its content times its scale setting.
@@ -126,7 +131,8 @@ fn hud_settings(own: Vec<Setting>) -> Vec<Setting> {
     }
     s.extend([
         Setting::heading("Text"),
-        Setting::slider("scale", "Scale", 1.0, [0.5, 3.0, 0.05], "{}x"),
+        Setting::slider("scale", "Scale", 1.0, [0.3, 4.0, 0.01], "{}x"),
+        Setting::slider("stretch", "Width stretch", 1.0, [0.25, 4.0, 0.01], "{}x"),
         Setting::colour("text_colour", "Text colour", 0xFFFFFFFF),
         Setting::toggle("chroma", "Rainbow text", false),
         Setting::slider("chroma_speed", "Rainbow speed", 1.0, [0.2, 5.0, 0.1], "{}x"),
@@ -154,11 +160,12 @@ fn hud_settings(own: Vec<Setting>) -> Vec<Setting> {
 /// When F3 or the chat is open, each element follows the HUD module's rule, or its own.
 pub const VISIBILITY: &[&str] = &["Global", "Hide", "Show"];
 
-fn visibility() -> [Setting; 3] {
+fn visibility() -> [Setting; 4] {
     [
         Setting::heading("Visibility"),
         Setting::choice("f3", "When F3 is open", 0, VISIBILITY),
         Setting::choice("chat", "When the chat is open", 0, VISIBILITY),
+        Setting::choice("containers", "In containers", 0, VISIBILITY),
     ]
 }
 
@@ -172,7 +179,8 @@ fn voice_hud_settings(own: Vec<Setting>) -> Vec<Setting> {
     }
     s.extend([
         Setting::heading("Look"),
-        Setting::slider("scale", "Scale", 1.0, [0.5, 3.0, 0.05], "{}x"),
+        Setting::slider("scale", "Scale", 1.0, [0.3, 4.0, 0.01], "{}x"),
+        Setting::slider("stretch", "Width stretch", 1.0, [0.25, 4.0, 0.01], "{}x"),
         Setting::toggle("background", "Background", true),
         Setting::slider(
             "background_opacity",
@@ -182,6 +190,37 @@ fn voice_hud_settings(own: Vec<Setting>) -> Vec<Setting> {
             "{}%",
         ),
     ]);
+    s.extend(visibility());
+    s
+}
+
+/// The Scoreboard module's settings. The game draws the sidebar, so its look is its own.
+fn scoreboard_settings() -> Vec<Setting> {
+    let mut s = vec![
+        Setting::heading("Module"),
+        Setting::toggle("numbers", "Show the score numbers", false),
+        Setting::toggle("title", "Show the title", true),
+        Setting::toggle("shadow", "Text shadow", false),
+        Setting::heading("Look"),
+        Setting::slider("scale", "Scale", 1.0, [0.3, 4.0, 0.01], "{}x"),
+        Setting::slider("stretch", "Width stretch", 1.0, [0.25, 4.0, 0.01], "{}x"),
+        Setting::toggle("background", "Background", true),
+        Setting::colour("background_colour", "Background colour", 0xFF000000),
+        Setting::slider(
+            "background_opacity",
+            "Background opacity",
+            30.0,
+            [0.0, 100.0, 5.0],
+            "{}%",
+        ),
+        Setting::slider(
+            "header_opacity",
+            "Title band opacity",
+            40.0,
+            [0.0, 100.0, 5.0],
+            "{}%",
+        ),
+    ];
     s.extend(visibility());
     s
 }
@@ -232,6 +271,17 @@ impl Module {
             || self.description.to_lowercase().contains(query)
     }
 
+    /// How much bigger than its own size its element draws, across and down: the scale, with
+    /// the width also stretched (Shift while resizing, or the Width stretch setting).
+    pub fn scale2(&self) -> [f32; 2] {
+        let scale = self.f32("scale").max(0.05);
+        let stretch = match settings::find(&self.settings, "stretch") {
+            Some(Setting::Slider { value, .. }) => value.max(0.05),
+            _ => 1.0,
+        };
+        [scale * stretch, scale]
+    }
+
     pub fn bool(&self, key: &str) -> bool {
         settings::get_bool(&self.settings, key)
     }
@@ -269,7 +319,8 @@ pub fn defaults() -> Vec<Module> {
         Module::new(
             Id::Hud,
             "HUD",
-            "Turns every HUD element on or off, and says when they make way for F3 and the chat.",
+            "Turns every HUD element on or off, and says when they make way for F3, the chat and \
+             containers. Nothing shows on the title screen or while paused.",
             Hud,
             0xFF64748B,
             true,
@@ -279,6 +330,8 @@ pub fn defaults() -> Vec<Module> {
                 Setting::choice("f3", "HUD elements", 0, &["Hide", "Show"]),
                 Setting::heading("When the chat is open"),
                 Setting::choice("chat", "HUD elements", 1, &["Hide", "Show"]),
+                Setting::heading("In containers and the inventory"),
+                Setting::choice("containers", "HUD elements", 0, &["Hide", "Show"]),
                 Setting::info(
                     "hud_note",
                     "Each element can follow these or choose its own, under Visibility",
@@ -439,6 +492,38 @@ pub fn defaults() -> Vec<Module> {
             ]),
         ),
         Module::new(
+            Id::Scoreboard,
+            "Scoreboard",
+            "The server's sidebar scoreboard, moved where you like, without the red numbers if you \
+             want, in your own colours.",
+            Hud,
+            0xFF0F766E,
+            false,
+            Some([1.0, 0.35]),
+            scoreboard_settings(),
+        ),
+        Module::new(
+            Id::Freecam,
+            "Freecam",
+            "Press its key (F6 to start with) to fly the camera away from your player, through \
+             blocks; your player stays where they are. Press it again to come back.",
+            Utility,
+            0xFF7C3AED,
+            true,
+            None,
+            vec![
+                Setting::bind(MAP_FREECAM, "Freecam key"),
+                Setting::slider("speed", "Speed", 10.0, [1.0, 60.0, 1.0], "{} blocks/s"),
+                Setting::toggle("free", "Fly where you look (not level)", false),
+                Setting::toggle("show_player", "See your player (third person)", true),
+                Setting::toggle("clear_fog", "See clearly in water and lava", true),
+                Setting::info(
+                    "freecam_note",
+                    "Space and Shift go up and down, Sprint doubles the speed",
+                ),
+            ],
+        ),
+        Module::new(
             Id::ToggleSprint,
             "Toggle Sprint & Sneak",
             "Press a key to sprint or sneak without holding a key; press it again to stop.",
@@ -472,9 +557,16 @@ pub fn defaults() -> Vec<Module> {
             None,
             vec![
                 Setting::choice("show", "Show", 0, &["Always", "Hold Shift"]),
-                Setting::toggle("tint", "Tooltip in the box's colour", true),
+                Setting::toggle("tint", "In the box's colour", true),
                 Setting::toggle("hide_list", "Hide the game's list of items", true),
                 Setting::toggle("hint", "Say to hold Shift", true),
+                Setting::slider(
+                    "raise",
+                    "Move the tooltip up",
+                    16.0,
+                    [0.0, 80.0, 2.0],
+                    "{}px",
+                ),
             ],
         ),
         Module::new(
@@ -487,8 +579,16 @@ pub fn defaults() -> Vec<Module> {
             None,
             vec![
                 Setting::choice("show", "Show", 0, &["Always", "Hold Shift"]),
+                Setting::toggle("tint", "In the ender chest's colours", true),
                 Setting::toggle("seen", "Say when it was last seen", true),
                 Setting::toggle("hint", "Say to hold Shift", true),
+                Setting::slider(
+                    "raise",
+                    "Move the tooltip up",
+                    16.0,
+                    [0.0, 80.0, 2.0],
+                    "{}px",
+                ),
             ],
         ),
         Module::new(

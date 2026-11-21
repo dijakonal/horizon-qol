@@ -8,6 +8,9 @@
   "voice_chat.hk_whisper": "Whisper",
   "voice_chat.hk_mute": "Mute Microphone",
   "voice_chat.hk_disable": "Voice Chat Off / On",
-  "horizon_qol.setting.chat_message": "Say \"Loaded\" in chat when joining",
-  "horizon_qol.setting.chat_message.tooltip": "Every other setting is in the mod's own menu: press Right Shift in a world, or this Config button while in a world."
+  "key.horizon_qol.freecam": "Freecam",
+  "horizon_qol.setting.config_opens": "The Config button opens",
+  "horizon_qol.setting.config_opens.editor": "HUD editor",
+  "horizon_qol.setting.config_opens.menu": "Mod menu",
+  "horizon_qol.setting.config_opens.tooltip": "Every other setting is in the mod's own menu: press Right Shift in a world, or this Config button while in a world."
 }

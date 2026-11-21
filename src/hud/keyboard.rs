@@ -34,6 +34,19 @@ impl Layout {
         Layout::Colemak,
     ];
 
+    /// The layout's name, as its Layout option and the config file write it.
+    pub fn name(self) -> &'static str {
+        let i = Self::ALL.iter().position(|l| *l == self).unwrap_or(0);
+        LAYOUTS[i + 1]
+    }
+
+    /// The layout a [`Layout::name`] names, in any case.
+    pub fn named(name: &str) -> Option<Layout> {
+        Self::ALL
+            .into_iter()
+            .find(|l| l.name().eq_ignore_ascii_case(name))
+    }
+
     /// The layout of Layout setting option `i`; None for Auto.
     pub fn from_setting(i: usize) -> Option<Layout> {
         i.checked_sub(1).and_then(|i| Self::ALL.get(i).copied())
@@ -451,6 +464,19 @@ impl Detector {
         }
     }
 
+    /// Starts from a layout found before (kept in the config file), so Auto doesn't fall back to
+    /// US at every start until the right keys are pressed again.
+    pub fn seed(&mut self, layout: Layout) {
+        let i = match layout {
+            Layout::Uk => {
+                self.iso_seen = true;
+                0
+            }
+            other => Layout::ALL.iter().position(|l| *l == other).unwrap_or(0),
+        };
+        self.scores[i] += 5;
+    }
+
     /// The layout the presses so far fit best; US until something says otherwise, UK for a US
     /// fit on an ISO board.
     pub fn layout(&self) -> Layout {
@@ -563,5 +589,22 @@ mod tests {
         d.press("key.keyboard.w", Some("key.keyboard.w"));
         d.press(ISO_EXTRA, None);
         assert_eq!(d.layout(), Layout::Uk);
+    }
+
+    #[test]
+    fn a_layout_found_before_is_where_auto_starts() {
+        for layout in Layout::ALL {
+            let mut d = Detector::default();
+            d.seed(layout);
+            assert_eq!(d.layout(), layout);
+            assert_eq!(Layout::named(&layout.name().to_lowercase()), Some(layout));
+        }
+        // Enough presses still overrule it: QWERTZ's Z where US has Y.
+        let mut d = Detector::default();
+        d.seed(Layout::Us);
+        for _ in 0..8 {
+            d.press("key.keyboard.y", Some("key.keyboard.z"));
+        }
+        assert_eq!(d.layout(), Layout::Qwertz);
     }
 }

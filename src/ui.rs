@@ -227,6 +227,8 @@ pub struct Gui {
     pub profile_action: Option<ProfileAction>,
     /// The profile whose Delete was pressed once, waiting for a second press.
     confirm_delete: Option<usize>,
+    /// Shift is held: a corner drag stretches the element instead of scaling it.
+    pub shift: bool,
 }
 
 impl Gui {
@@ -260,6 +262,7 @@ impl Gui {
             note: None,
             profile_action: None,
             confirm_delete: None,
+            shift: false,
         }
     }
 
@@ -589,7 +592,7 @@ impl Gui {
             let reset = [cx - 45.0, cy + 16.0, 90.0, 14.0];
             p.button(reset, "Reset layout", hover(Target::ResetLayout), false);
             self.hit(reset, Target::ResetLayout);
-            let hint = "Drag to move  -  Drag a corner to resize  -  Right-click for settings";
+            let hint = "Drag: move  -  Corner: resize (Shift: stretch)  -  Right-click: settings";
             let hint = p.fit(hint, sw - 8.0);
             let hw = p.width(&hint) + 10.0;
             let hint_r = [((sw - hw) / 2.0).floor(), cy + 36.0, hw, 13.0];
@@ -607,7 +610,7 @@ impl Gui {
             let Some(content) = hud::editor_content(m, &sample) else {
                 continue;
             };
-            let scale = m.f32("scale");
+            let scale = m.scale2();
             let unscaled = hud::measure(m, &content, &|s| p.draw.text_width(s));
             let r = hud::rect(place, scale, unscaled, size);
             self.elements.push((i, r));
@@ -631,7 +634,11 @@ impl Gui {
                 p.fill(frame, 0x204F8CFF);
                 p.outline(frame, theme::ACCENT);
                 // Its name and scale above it, or below when there is no room.
-                let tag = format!("{}  {:.2}x", m.name, scale);
+                let tag = if (scale[0] - scale[1]).abs() < 0.005 {
+                    format!("{}  {:.2}x", m.name, scale[1])
+                } else {
+                    format!("{}  {:.2} x {:.2}", m.name, scale[0], scale[1])
+                };
                 let tw = p.width(&tag) + 6.0;
                 let ty = if frame[1] >= 13.0 {
                     frame[1] - 12.0
@@ -1496,7 +1503,11 @@ impl Gui {
             Target::ResetLayout => {
                 for m in modules.iter_mut() {
                     m.place = m.default_place;
-                    if let Some(s) = m.settings.iter_mut().find(|s| s.key() == "scale") {
+                    for s in m
+                        .settings
+                        .iter_mut()
+                        .filter(|s| s.key() == "scale" || s.key() == "stretch")
+                    {
                         s.reset();
                     }
                 }
@@ -1506,7 +1517,7 @@ impl Gui {
                 let Some(&(_, er)) = self.elements.iter().find(|(m, _)| *m == module) else {
                     return true;
                 };
-                let scale = modules[module].f32("scale").max(0.01);
+                let scale = modules[module].scale2();
                 let left = corner == 0 || corner == 2;
                 let top = corner < 2;
                 self.drag = Some(Drag::Resize {
@@ -1516,7 +1527,7 @@ impl Gui {
                         if left { er[0] + er[2] } else { er[0] },
                         if top { er[1] + er[3] } else { er[1] },
                     ],
-                    unscaled: [er[2] / scale, er[3] / scale],
+                    unscaled: [er[2] / scale[0], er[3] / scale[1]],
                 });
             }
             Target::Element(i) => {
@@ -1628,8 +1639,9 @@ impl Gui {
     }
 
     /// Scales element `module` so the dragged corner follows `at`, its opposite corner `anchor`
-    /// staying put: the scale is the larger of the two the pointer asks for, so the element
-    /// keeps its shape, as a picture does when its corner is dragged.
+    /// staying put. It keeps its shape, as a picture does when its corner is dragged: the scale
+    /// is the one whose corner comes nearest the pointer. With Shift held its width and height
+    /// follow the pointer each on its own, the width stretched against the height.
     fn resize_element(
         &mut self,
         module: usize,
@@ -1639,16 +1651,29 @@ impl Gui {
         at: [f32; 2],
         modules: &mut [Module],
     ) {
-        let want = ((at[0] - anchor[0]).abs() / unscaled[0].max(1.0))
-            .max((at[1] - anchor[1]).abs() / unscaled[1].max(1.0));
+        let d = [(at[0] - anchor[0]).abs(), (at[1] - anchor[1]).abs()];
+        let [uw, uh] = [unscaled[0].max(1.0), unscaled[1].max(1.0)];
         let m = &mut modules[module];
-        let Some(setting) = m.settings.iter_mut().find(|s| s.key() == "scale") else {
-            return;
+        let set = |m: &mut Module, key: &str, v: f32| {
+            if let Some(s) = m.settings.iter_mut().find(|s| s.key() == key) {
+                s.set_slider(v);
+            }
         };
-        setting.set_slider(want);
-        let scale = m.f32("scale");
+        if self.shift {
+            let (sx, sy) = (d[0] / uw, d[1] / uh);
+            set(m, "scale", sy);
+            let scale = m.f32("scale").max(0.05);
+            set(m, "stretch", sx / scale);
+        } else {
+            // The corner moves along the element's diagonal: the nearest point on it to the
+            // pointer.
+            let stretch = m.scale2()[0] / m.scale2()[1];
+            let ux = uw * stretch;
+            set(m, "scale", (d[0] * ux + d[1] * uh) / (ux * ux + uh * uh));
+        }
+        let scale = m.scale2();
         let [sw, sh] = self.screen;
-        let (w, h) = (unscaled[0] * scale, unscaled[1] * scale);
+        let (w, h) = (unscaled[0] * scale[0], unscaled[1] * scale[1]);
         let left = corner == 0 || corner == 2;
         let top = corner < 2;
         let x = if left { anchor[0] - w } else { anchor[0] };

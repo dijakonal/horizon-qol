@@ -200,9 +200,9 @@ pub const HUD_SPEAKERS: usize = 2;
 pub struct HudSlot {
     /// Shown now: its module is on, the HUD is on, and neither F3 nor the chat hides it.
     pub shown: bool,
-    /// Its top left as a fraction of the screen, and its scale.
+    /// Its top left as a fraction of the screen, and its scale across and down.
     pub place: [f32; 2],
-    pub scale: f32,
+    pub scale: [f32; 2],
     /// Its background, ARGB (0 for none).
     pub background: u32,
     /// Speakers only: how many players at most, and whether their names show. For the status,
@@ -216,7 +216,7 @@ impl Default for HudSlot {
         Self {
             shown: false,
             place: [0.0, 0.0],
-            scale: 1.0,
+            scale: [1.0, 1.0],
             background: 0x9000_0000,
             limit: 6,
             names: true,
@@ -228,7 +228,7 @@ static SLOTS: std::sync::Mutex<[HudSlot; 3]> = std::sync::Mutex::new(
     [HudSlot {
         shown: false,
         place: [0.0, 0.0],
-        scale: 1.0,
+        scale: [1.0, 1.0],
         background: 0x9000_0000,
         limit: 6,
         names: true,
@@ -250,8 +250,8 @@ pub fn hud_slot(kind: usize) -> Option<HudSlot> {
 }
 
 /// Where element `kind`, `size` GUI pixels before scaling, is drawn on a screen of `screen`
-/// pixels: its top left (kept on the screen) and its scale. None when it doesn't show now.
-pub fn hud_place(kind: usize, size: [f32; 2], screen: [f32; 2]) -> Option<([f32; 2], f32)> {
+/// pixels: its top left (kept on the screen) and its scale across and down. None when it doesn't show now.
+pub fn hud_place(kind: usize, size: [f32; 2], screen: [f32; 2]) -> Option<([f32; 2], [f32; 2])> {
     let slot = hud_slot(kind)?;
     let place = crate::modules::Place {
         x: slot.place[0],

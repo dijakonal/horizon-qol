@@ -345,9 +345,9 @@ fn options_switches_sliders_and_swatches_change_settings() {
     });
     let (r, _) = *g.hits.iter().find(|(_, x)| *x == t).unwrap();
     assert!(g.mouse_pressed([r[0] + r[2] - 4.0, r[1] + 5.0], 0, &mut mods));
-    assert!((mods[ks].f32("scale") - 3.0).abs() < 1e-4);
+    assert!((mods[ks].f32("scale") - 4.0).abs() < 1e-4);
     assert!(g.mouse_dragged([r[0] - 50.0, r[1] + 5.0], &mut mods));
-    assert!((mods[ks].f32("scale") - 0.5).abs() < 1e-4);
+    assert!((mods[ks].f32("scale") - 0.3).abs() < 1e-4);
     assert!(g.mouse_released());
 
     // A swatch.
@@ -440,7 +440,7 @@ fn the_hud_preview() {
         let Some(content) = crate::hud::editor_content(m, &d) else {
             continue;
         };
-        let scale = m.f32("scale");
+        let scale = m.scale2();
         let unscaled = crate::hud::measure(m, &content, &|s| r.text_width(s));
         let rect = crate::hud::rect(place, scale, unscaled, SIZE);
         crate::hud::draw(&mut r, m, &content, [rect[0], rect[1]], scale, &d);
@@ -505,8 +505,62 @@ fn dragging_a_corner_resizes_about_the_opposite_corner() {
 
     // It never grows past the slider's end.
     assert!(g.mouse_dragged([-1000.0, -1000.0], &mut mods));
-    assert!((mods[co].f32("scale") - 3.0).abs() < 1e-4);
+    assert!((mods[co].f32("scale") - 4.0).abs() < 1e-4);
     assert!(g.mouse_released());
+
+    // Off the diagonal, the corner goes to the nearest point on it: 3x across and 1x down
+    // asks for neither, but their best fit.
+    for (s, v) in [("scale", "1"), ("stretch", "1")] {
+        mods[co]
+            .settings
+            .iter_mut()
+            .find(|x| x.key() == s)
+            .unwrap()
+            .read(v);
+    }
+    mods[co].place = Some(Place { x: 0.05, y: 0.25 });
+    frame(&mut g, SIZE, [0.0, 0.0], &mods, "resize-before");
+    let (_, r) = *g.elements.iter().find(|(m, _)| *m == co).unwrap();
+    let br = centre_of(
+        &g,
+        Target::Handle {
+            module: co,
+            corner: 3,
+        },
+    );
+    assert!(g.mouse_pressed(br, 0, &mut mods));
+    assert!(g.mouse_dragged([r[0] + r[2] * 3.0, r[1] + r[3]], &mut mods));
+    let (w, h) = (r[2], r[3]);
+    let fit = (3.0 * w * w + h * h) / (w * w + h * h);
+    assert!((mods[co].f32("scale") - fit).abs() < 0.01);
+    assert!(g.mouse_released());
+
+    // With Shift held, width and height each follow the pointer: stretched, not scaled.
+    g.shift = true;
+    frame(&mut g, SIZE, [0.0, 0.0], &mods, "resize-before");
+    let (_, r) = *g.elements.iter().find(|(m, _)| *m == co).unwrap();
+    let br = centre_of(
+        &g,
+        Target::Handle {
+            module: co,
+            corner: 3,
+        },
+    );
+    let unscaled = [r[2] / mods[co].scale2()[0], r[3] / mods[co].scale2()[1]];
+    assert!(g.mouse_pressed(br, 0, &mut mods));
+    assert!(g.mouse_dragged(
+        [r[0] + unscaled[0] * 2.0, r[1] + unscaled[1] * 1.5],
+        &mut mods
+    ));
+    let [sx, sy] = mods[co].scale2();
+    assert!(
+        (sx - 2.0).abs() < 0.02 && (sy - 1.5).abs() < 0.01,
+        "{sx} {sy}"
+    );
+    assert!(g.mouse_released());
+    g.shift = false;
+    let r = frame(&mut g, SIZE, [0.0, 0.0], &mods, "resize-stretched");
+    let _ = r;
 }
 
 #[test]
@@ -670,7 +724,7 @@ fn keystrokes_previews_in_every_mode() {
         let m = &mods[ks];
         let content = crate::hud::content(m, &d).unwrap();
         let unscaled = crate::hud::measure(m, &content, &|s| r.text_width(s));
-        crate::hud::draw(&mut r, m, &content, [10.0, 10.0], 1.0, &d);
+        crate::hud::draw(&mut r, m, &content, [10.0, 10.0], [1.0, 1.0], &d);
         sizes.push(unscaled);
         r.write(name);
         // Every mode draws something, and the keyboard lights W.
@@ -697,7 +751,7 @@ fn keystrokes(name: &str, setup: &[(&str, &str)]) -> (Recorder, [f32; 2]) {
     let mut r = Recorder::new([420.0, 160.0]);
     let content = crate::hud::content(m, &d).unwrap();
     let size = crate::hud::measure(m, &content, &|s| r.text_width(s));
-    crate::hud::draw(&mut r, m, &content, [8.0, 8.0], 1.0, &d);
+    crate::hud::draw(&mut r, m, &content, [8.0, 8.0], [1.0, 1.0], &d);
     r.write(name);
     (r, size)
 }
@@ -789,25 +843,34 @@ fn container_preview_grids() {
     // A tooltip as the game draws one: its box, the item's name, then the grid under it.
     let mut r = Recorder::new([420.0, 220.0]);
     let [w, h] = crate::previews::grid_size();
-    let tooltip = |r: &mut Recorder, at: [f32; 2], name: &str, extra: f32| {
-        r.fill(
-            [at[0] - 3.0, at[1] - 3.0, w + 6.0, 12.0 + extra + 6.0],
-            0xF0100010,
-        );
-        r.fill([at[0] - 2.0, at[1] - 2.0, w + 4.0, 1.0], 0x505000FF);
-        r.text(name, at, 0xFFFFFFFF, true);
-    };
+    // The box in the colours the mod gives it (`render_tooltip_texture`).
+    let tooltip =
+        |r: &mut Recorder, at: [f32; 2], name: &str, extra: f32, look: (u32, u32, u32)| {
+            let (back, top, bottom) = look;
+            let full = 12.0 + extra + 6.0;
+            r.fill([at[0] - 3.0, at[1] - 3.0, w + 6.0, full], back);
+            r.fill([at[0] - 2.0, at[1] - 2.0, w + 4.0, 1.0], top);
+            r.fill([at[0] - 2.0, at[1] - 2.0, 1.0, full - 2.0], top);
+            r.fill([at[0] + w + 1.0, at[1] - 2.0, 1.0, full - 2.0], bottom);
+            r.fill([at[0] - 2.0, at[1] + full - 5.0, w + 4.0, 1.0], bottom);
+            r.text(name, at, 0xFFFFFFFF, true);
+        };
     let empty = vec![None; crate::previews::SLOTS];
-    tooltip(&mut r, [10.0, 10.0], "Red Shulker Box", h + 2.0);
-    crate::previews::draw_grid(&mut r, [10.0, 22.0], &empty, Some(0xFFB02E26));
-    tooltip(&mut r, [10.0, 110.0], "Ender Chest", h + 2.0);
+    let yellow = crate::previews::shulker_colour("minecraft:yellow_shulker_box")
+        .flatten()
+        .unwrap();
+    let shulker = crate::previews::tooltip_colours(yellow);
+    let ender = crate::previews::ender_tooltip_colours();
+    tooltip(&mut r, [10.0, 10.0], "Yellow Shulker Box", h + 2.0, shulker);
+    crate::previews::draw_grid(&mut r, [10.0, 22.0], &empty, Some(yellow));
+    tooltip(&mut r, [10.0, 110.0], "Ender Chest", h + 2.0, ender);
     crate::previews::draw_grid(
         &mut r,
         [10.0, 122.0],
         &empty,
         Some(crate::previews::ENDER_GREEN),
     );
-    tooltip(&mut r, [220.0, 10.0], "Ender Chest", 12.0);
+    tooltip(&mut r, [220.0, 10.0], "Ender Chest", 12.0, ender);
     r.text(
         crate::previews::ENDER_UNSEEN,
         [220.0, 22.0],

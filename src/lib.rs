@@ -6,11 +6,14 @@
 //! Potion Effects, Clock) draw on the HUD; Toggle Sprint and Zoom change how you play. Settings
 //! are saved in `config/horizon_qol/settings.txt`.
 
+mod freecam;
 mod hud;
 mod icons;
 mod modules;
 mod previews;
 mod profiles;
+/// The sidebar scoreboard's look, public for its game-side code (`src/mixins/scoreboard.rs`).
+pub mod scoreboard;
 mod settings;
 mod ui;
 /// Voice chat, public so its game-side code (`[[native.mixin]]`) reaches it as
@@ -19,15 +22,14 @@ pub mod voice;
 
 use mod_api::text::TextContent;
 use mod_api::{
-    self, ClientHost, ClientPlayerLoggingInEvent, ClientTickPreEvent, ConfigPath,
-    ConfigPath as DataPath, EquipmentSlot, Flow, GuiRenderPostEvent, Hooks, Host, InputKeyEvent,
-    ItemPart, ItemTooltipEvent, KeyAction, KeyConflictContext, KeyRegistration,
-    MouseButtonPreEvent, MouseScrollingEvent, Registrar, RegistrationContext,
-    RenderTooltipTextureEvent, ScreenCharTypedPreEvent, ScreenClosingEvent,
-    ScreenKeyPressedPreEvent, ScreenMouseButtonPressedPreEvent, ScreenMouseButtonReleasedPreEvent,
-    ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent, ScreenRenderPostEvent,
-    ScreenTransparentBackgroundEvent, Text, TooltipComponentDrawEvent, TooltipComponentEvent, Zoom,
-    ZoomEvent,
+    self, ClientHost, ClientTickPreEvent, ConfigPath, ConfigPath as DataPath, EquipmentSlot, Flow,
+    GuiRenderPostEvent, Hooks, Host, InputKeyEvent, ItemPart, ItemTooltipEvent, KeyAction,
+    KeyConflictContext, KeyRegistration, MouseButtonPreEvent, MouseScrollingEvent, Registrar,
+    RegistrationContext, RenderTooltipPreEvent, RenderTooltipTextureEvent, ScreenCharTypedPreEvent,
+    ScreenClosingEvent, ScreenKeyPressedPreEvent, ScreenMouseButtonPressedPreEvent,
+    ScreenMouseButtonReleasedPreEvent, ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent,
+    ScreenRenderPostEvent, ScreenTransparentBackgroundEvent, Text, TooltipComponentDrawEvent,
+    TooltipComponentEvent, Zoom, ZoomEvent,
 };
 use modules::{Id, Module};
 use previews::Show;
@@ -42,13 +44,20 @@ pub const MOD_ID: &str = ID;
 
 /// The next time the mod screen opens without the menu key, it opens on the mod menu.
 static OPEN_ON_MENU: AtomicBool = AtomicBool::new(false);
+/// The Config button opens the mod menu rather than the HUD editor (the mod's setting).
+static CONFIG_OPENS_MENU: AtomicBool = AtomicBool::new(false);
 
 /// The Mods screen's Config button was pressed on this mod (its game-side code calls this just
-/// before opening the mod screen): the screen opens on the mod menu, not the HUD editor.
+/// before opening the mod screen): the screen opens on the HUD editor, or the mod menu when the
+/// mod's setting says so.
 pub fn config_button() {
-    OPEN_ON_MENU.store(true, Ordering::Relaxed);
+    OPEN_ON_MENU.store(CONFIG_OPENS_MENU.load(Ordering::Relaxed), Ordering::Relaxed);
     voice::screen_taken();
 }
+
+/// The PNG of the mod's logo, for the Mods screen: the game shows no icon for a native mod
+/// itself, so the mod's game-side code (`src/mixins/mod_icon.rs`) gives it this one.
+pub const ICON_PNG: &[u8] = include_bytes!("../icon.png");
 
 /// A new screen state: on the mod menu after the Config button, else on the HUD editor.
 fn new_gui() -> ui::Gui {
@@ -59,8 +68,9 @@ fn new_gui() -> ui::Gui {
     }
 }
 
-/// The mod's one setting on its Options > Mods page: the "loaded" line in chat.
-const SETTING_CHAT: &str = "chat_message";
+/// The mod's one setting on its Options > Mods page: what its Config button opens. (A mod
+/// needs a setting for the page to have a Config button at all.)
+const SETTING_CONFIG: &str = "config_opens";
 /// The key mapping that opens and closes the screen.
 const OPEN_MENU: &str = modules::MAP_OPEN_MENU;
 const DEFAULT_KEY: &str = "key.keyboard.right.shift";
@@ -70,6 +80,7 @@ const ZOOM_KEY: &str = "key.keyboard.c";
 /// The keys that switch Toggle Sprint and Toggle Sneak; sneak starts unbound.
 const SPRINT_KEY: &str = "key.keyboard.y";
 const SNEAK_KEY: &str = "key.keyboard.unknown";
+const FREECAM_KEY: &str = "key.keyboard.f6";
 /// How long a let-go key takes to fade out in Keystrokes, in milliseconds.
 const FADE_MS: f32 = 160.0;
 /// The config file, under the game's `config/` folder.
@@ -113,6 +124,9 @@ struct State {
     last_rotation: Option<[f32; 2]>,
     /// Works out the keyboard layout from the player's typing, for Keystrokes' Auto layout.
     layout: hud::keyboard::Detector,
+    /// The camera while Freecam is on, and the camera type to go back to.
+    freecam: Option<freecam::Freecam>,
+    camera_before: Option<mod_api::CameraType>,
     /// The profile in use, by name: changes save to it too.
     active_profile: Option<String>,
     /// The saved profiles: name and file name, by name.
@@ -138,8 +152,6 @@ struct HorizonQol {
     /// The menu's key was pressed with the screen open: the next client tick closes it (the
     /// screen input hooks' host only reads).
     close: AtomicBool,
-    /// The player joined a world: the next client tick says in chat that the mod is loaded.
-    greet: AtomicBool,
 }
 
 impl HorizonQol {
@@ -160,6 +172,8 @@ impl HorizonQol {
             sneak_toggled: false,
             active_profile: None,
             profiles: Vec::new(),
+            freecam: None,
+            camera_before: None,
             zoom_toggled: false,
             zoom: None,
             voice_synced: None,
@@ -245,6 +259,14 @@ fn load_config(host: &dyn ClientHost, state: &mut State) {
         let lines = settings::parse(&text);
         state.sprint_toggled = state.module(Id::ToggleSprint).bool("remember")
             && lines.iter().any(|(k, v)| k == SPRINT_STATE && v == "true");
+        if let Some(layout) = lines
+            .iter()
+            .find(|(k, _)| k == DETECTED_LAYOUT)
+            .and_then(|(_, v)| hud::keyboard::Layout::named(v))
+        {
+            state.layout.seed(layout);
+            state.data.auto_layout = state.layout.layout();
+        }
         state.active_profile = lines
             .iter()
             .find(|(k, _)| k == ACTIVE_PROFILE)
@@ -261,6 +283,9 @@ fn load_config(host: &dyn ClientHost, state: &mut State) {
     }
 }
 
+/// The config line keeping the keyboard layout Auto found.
+const DETECTED_LAYOUT: &str = "keyboard.detected";
+
 /// The config line naming the profile in use.
 const ACTIVE_PROFILE: &str = "profile.active";
 
@@ -269,6 +294,7 @@ fn save_config(host: &dyn ClientHost, state: &State) {
     if let Ok(path) = ConfigPath::new(CONFIG) {
         let mut text = modules::save(&state.modules);
         text += &format!("{SPRINT_STATE}={}\n", state.sprint_toggled);
+        text += &format!("{DETECTED_LAYOUT}={}\n", state.data.auto_layout.name());
         if let Some(name) = &state.active_profile {
             text += &format!("{ACTIVE_PROFILE}={name}\n");
         }
@@ -283,11 +309,12 @@ fn save_config(host: &dyn ClientHost, state: &State) {
 }
 
 /// The mod's Controls mappings, in the order the menu lists them.
-const MAPPINGS: [&str; 9] = [
+const MAPPINGS: [&str; 10] = [
     OPEN_MENU,
     ZOOM,
     modules::MAP_SPRINT,
     modules::MAP_SNEAK,
+    modules::MAP_FREECAM,
     voice::engine::KEY_MENU,
     voice::engine::KEY_PTT,
     voice::engine::KEY_WHISPER,
@@ -803,7 +830,8 @@ impl ItemPart for EnderTooltip {
         let at = [event.origin[0], event.origin[1] + 2.0];
         match items {
             Some(items) => {
-                previews::draw_grid(&mut *event.draw, at, &items, Some(previews::ENDER_GREEN))
+                let tint = previews::with(|s| s.ender_tint).then_some(previews::ENDER_GREEN);
+                previews::draw_grid(&mut *event.draw, at, &items, tint)
             }
             None => event
                 .draw
@@ -952,36 +980,160 @@ fn voice_sounds(host: &dyn ClientHost, state: &mut State, now: voice::engine::qo
     }
 }
 
-/// Whether module `m`'s element makes way now: F3 or the chat is open and its rule (its own, or
-/// the HUD module's) says to hide.
-fn makes_way(m: &Module, hud: &Module, f3: bool, chat: bool) -> bool {
+/// What is over the world now, that HUD elements may make way for.
+#[derive(Clone, Copy, Default, Debug)]
+struct Overlays {
+    /// F3's screen: it takes the top corners.
+    f3: bool,
+    /// The chat box.
+    chat: bool,
+    /// A container: a chest, a furnace, the inventory, the creative tabs...
+    container: bool,
+    /// Nothing of the HUD shows: no world (the title screen), or the game is paused.
+    hidden: bool,
+}
+
+/// Screens with no world under them to play in: the pause menu and the options it opens.
+const PAUSE_SCREENS: [&str; 2] = ["paused", "options"];
+/// Containers that open with no block's menu title.
+const CONTAINER_SCREENS: [&str; 2] = ["inventory", "creative"];
+
+/// Whether module `m`'s element makes way now: nothing shows on the title screen or while
+/// paused; F3, the chat or a container is open and its rule (its own, or the HUD module's)
+/// says to hide.
+fn makes_way(m: &Module, hud: &Module, o: Overlays) -> bool {
     let hide = |key: &str| match m.choice(key) {
         1 => true,
         2 => false,
         _ => hud.choice(key) == 0,
     };
-    (f3 && hide("f3")) || (chat && hide("chat"))
+    o.hidden
+        || (o.f3 && hide("f3"))
+        || (o.chat && hide("chat"))
+        || (o.container && hide("containers"))
 }
 
-/// F3 is open (it takes the top corners), and the chat box is.
-fn overlays(host: &dyn ClientHost) -> (bool, bool) {
-    let f3 = !host.native_corner_shown(mod_api::Corner::TopLeft);
-    let chat = host.observed_screen_id().is_some_and(|s| s.id == "chat");
-    (f3, chat)
+fn overlays(host: &dyn ClientHost) -> Overlays {
+    let screen = host.observed_screen_id().map(|s| s.id);
+    let is = |ids: &[&str]| screen.as_deref().is_some_and(|s| ids.contains(&s));
+    let in_world = host.client_session().client_server().is_some();
+    Overlays {
+        f3: !host.native_corner_shown(mod_api::Corner::TopLeft),
+        chat: is(&["chat"]),
+        container: is(&CONTAINER_SCREENS) || host.screen_title().is_some(),
+        hidden: !in_world || host.is_paused() || is(&PAUSE_SCREENS),
+    }
+}
+
+/// The local player's look: yaw and pitch in degrees.
+fn player_look(host: &dyn ClientHost) -> Option<[f32; 2]> {
+    let player = host.local_player()?;
+    player.entity().rotation(host)
+}
+
+/// Freecam's tick: its key turns it on and off, the mouse's turn of the player goes to the
+/// camera (the player's look is put back), and the camera moves.
+fn freecam_tick(host: &mut dyn ClientHost, state: &mut State, pressed: bool) {
+    let m = state.module(Id::Freecam);
+    let (on, speed, free, show) = (
+        m.enabled,
+        m.f32("speed"),
+        m.bool("free"),
+        m.bool("show_player"),
+    );
+    let in_world = host.local_player().is_some();
+    let want = match (&state.freecam, pressed) {
+        (Some(_), true) => false,
+        (None, true) => on && host.playing(),
+        (cam, false) => cam.is_some(),
+    };
+    let want = want && on && in_world;
+    match (state.freecam.is_some(), want) {
+        (false, true) => {
+            let Some(look) = player_look(host) else {
+                return;
+            };
+            // From the player's eyes, as the first-person camera draws them.
+            let eye = host
+                .camera()
+                .filter(|_| host.camera_type() == mod_api::CameraType::FirstPerson)
+                .map(|c| c.position)
+                .or_else(|| {
+                    let player = host.local_player()?;
+                    let p = player.entity().position(&*host)?;
+                    Some([p[0], p[1] + 1.62, p[2]])
+                });
+            let Some(eye) = eye else { return };
+            state.freecam = Some(freecam::Freecam::new(eye, look));
+            state.camera_before = Some(host.camera_type());
+            if show {
+                host.set_camera_type(mod_api::CameraType::ThirdPersonBack);
+            }
+        }
+        (true, false) => {
+            state.freecam = None;
+            if let Some(before) = state.camera_before.take() {
+                host.set_camera_type(before);
+            }
+        }
+        _ => {}
+    }
+    if let Some(cam) = state.freecam.as_mut() {
+        if let Some(now) = player_look(host) {
+            cam.turn(now);
+            let _ = host.set_local_rotation(cam.frozen[0], cam.frozen[1]);
+        }
+        cam.step(speed, free);
+    }
+}
+
+/// Tells the game-side scoreboard where it goes and how it looks, or that the game draws its
+/// own (the module is off).
+fn scoreboard_look(host: &dyn ClientHost, state: &State) {
+    let m = state.module(Id::Scoreboard);
+    let hud = state.module(Id::Hud);
+    // With the module or the whole HUD off, the game's own sidebar is back.
+    if !m.enabled || !hud.enabled {
+        scoreboard::set(None);
+        return;
+    }
+    let o = overlays(host);
+    let editing = host.mod_screen() == Some(ID) && !voice::menu_open(host);
+    let alpha = |key: &str| ((m.f32(key).clamp(0.0, 100.0) * 2.55).round() as u32) << 24;
+    let colour = m.colour("background_colour") & 0x00FF_FFFF;
+    let on = m.bool("background");
+    scoreboard::set(Some(scoreboard::Look {
+        shown: !editing && !makes_way(m, hud, o),
+        place: m.place.map_or([1.0, 0.35], |p| [p.x, p.y]),
+        scale: m.scale2(),
+        numbers: m.bool("numbers"),
+        title: m.bool("title"),
+        shadow: m.bool("shadow"),
+        background: if on {
+            alpha("background_opacity") | colour
+        } else {
+            0
+        },
+        header: if on {
+            alpha("header_opacity") | colour
+        } else {
+            0
+        },
+    }));
 }
 
 /// Tells the game-side voice HUD where its three elements go and whether they show now.
 fn voice_slots(host: &dyn ClientHost, state: &State) {
-    let (f3, chat) = overlays(host);
+    let o = overlays(host);
     let editing = host.mod_screen() == Some(ID) && !voice::menu_open(host);
     let hud = state.module(Id::Hud);
     let voice_on = state.on(Id::VoiceChat);
     let slot = |id: Id| {
         let m = state.module(id);
         voice::HudSlot {
-            shown: hud.enabled && voice_on && m.enabled && !editing && !makes_way(m, hud, f3, chat),
+            shown: hud.enabled && voice_on && m.enabled && !editing && !makes_way(m, hud, o),
             place: m.place.map_or([0.0, 0.0], |p| [p.x, p.y]),
-            scale: m.f32("scale").max(0.1),
+            scale: m.scale2(),
             background: if m.bool("background") {
                 ((m.f32("background_opacity").clamp(0.0, 100.0) * 2.55).round() as u32) << 24
             } else {
@@ -1007,8 +1159,16 @@ impl Hooks for HorizonQol {
     fn register(&self, r: &mut dyn Registrar, _: &RegistrationContext) {
         // A setting gives the mod a Config button on Options > Mods, which opens its menu.
         let _ = r.register_setting(
-            mod_api::SettingSpec::toggle(SETTING_CHAT, "horizon_qol.setting.chat_message", true)
-                .tooltip("horizon_qol.setting.chat_message.tooltip"),
+            mod_api::SettingSpec::choice(
+                SETTING_CONFIG,
+                "horizon_qol.setting.config_opens",
+                [
+                    "horizon_qol.setting.config_opens.editor",
+                    "horizon_qol.setting.config_opens.menu",
+                ],
+                0,
+            )
+            .tooltip("horizon_qol.setting.config_opens.tooltip"),
         );
         voice::register(r);
         // Every shulker box by id: the item tag isn't certain to exist in every version.
@@ -1056,6 +1216,11 @@ impl Hooks for HorizonQol {
                 .label("key.horizon_qol.toggle_sneak")
                 .context(KeyConflictContext::InGame),
         );
+        r.register_key_mapping(
+            KeyRegistration::new(modules::MAP_FREECAM, FREECAM_KEY)
+                .label("key.horizon_qol.freecam")
+                .context(KeyConflictContext::InGame),
+        );
     }
 
     fn client_tick_pre(&self, host: &mut dyn ClientHost, _: &mut ClientTickPreEvent) {
@@ -1096,14 +1261,10 @@ impl Hooks for HorizonQol {
         if pressed {
             self.open(host);
         }
-        if self.greet.load(Ordering::Relaxed) && host.playing() {
-            self.greet.store(false, Ordering::Relaxed);
-            if host.setting_bool(SETTING_CHAT).unwrap_or(true) {
-                let key = key_label(&bound_key(host));
-                let line = format!("[Horizon QoL] Loaded. Press {key} to open the menu.");
-                let _ = host.chat_line(Text::literal(line));
-            }
-        }
+        CONFIG_OPENS_MENU.store(
+            host.setting_choice(SETTING_CONFIG) == Some(1),
+            Ordering::Relaxed,
+        );
 
         let mut guard = self.state();
         let Some(state) = guard.as_mut() else {
@@ -1117,6 +1278,7 @@ impl Hooks for HorizonQol {
         sync_voice(state);
         voice_sounds(host, state, voice::engine::qol::snapshot());
         voice_slots(host, state);
+        scoreboard_look(host, state);
 
         // The previews' settings, and the ender chest remembered for this world or server.
         let shulker = state.module(Id::ShulkerPreview);
@@ -1127,11 +1289,15 @@ impl Hooks for HorizonQol {
             shulker.bool("hide_list"),
         );
         let e_show = Show::from(ender.enabled, ender.choice("show"));
+        let raise = [shulker.f32("raise"), ender.f32("raise")];
+        let e_tint = ender.bool("tint");
         let session = session_file(host);
         let changed = previews::with(|p| {
             p.shulker = s_show;
             p.shulker_tint = s_tint;
             p.shulker_hide_list = s_hide;
+            [p.shulker_raise, p.ender_raise] = raise;
+            p.ender_tint = e_tint;
             p.ender = e_show;
             let changed = p.session != session;
             if changed {
@@ -1158,11 +1324,13 @@ impl Hooks for HorizonQol {
             }
             n % 2 == 1
         };
-        let (sprint_key, sneak_key, zoom_key) = (
+        let (sprint_key, sneak_key, zoom_key, freecam_key) = (
             flip(modules::MAP_SPRINT),
             flip(modules::MAP_SNEAK),
             flip(ZOOM),
+            flip(modules::MAP_FREECAM),
         );
+        freecam_tick(host, state, freecam_key);
         let toggles = state.module(Id::ToggleSprint);
         let (sprint_on, sneak_on) = (
             toggles.enabled && toggles.bool("sprint"),
@@ -1225,7 +1393,12 @@ impl Hooks for HorizonQol {
         if event.action == KeyAction::Press {
             if let Some(state) = self.state().as_mut() {
                 state.layout.press(event.key, event.layout_key);
-                state.data.auto_layout = state.layout.layout();
+                let found = state.layout.layout();
+                // Saved once the config is read, so it never overwrites it with defaults.
+                if found != state.data.auto_layout && state.loaded {
+                    state.data.auto_layout = found;
+                    save_config(host, state);
+                }
             }
             if host.playing() && event.key == bound_key(host) {
                 self.open(host);
@@ -1292,26 +1465,113 @@ impl Hooks for HorizonQol {
         event: &mut RenderTooltipTextureEvent<'_>,
     ) {
         let Some(stack) = event.stack else { return };
-        let id = stack.item().id(host);
-        let Some(colour) = previews::shulker_colour(&id) else {
-            return;
-        };
-        let (show, tint) = previews::with(|p| (p.shulker, p.shulker_tint));
-        if show == Show::Off || !tint || event.texture.is_some() {
+        if event.texture.is_some() {
             return;
         }
-        let (background, top, bottom) =
-            previews::tooltip_colours(colour.unwrap_or(previews::SHULKER_PURPLE));
+        let id = stack.item().id(host);
+        let (background, top, bottom) = if let Some(colour) = previews::shulker_colour(&id) {
+            let (show, tint) = previews::with(|p| (p.shulker, p.shulker_tint));
+            if show == Show::Off || !tint {
+                return;
+            }
+            previews::tooltip_colours(colour.unwrap_or(previews::SHULKER_PURPLE))
+        } else if id == "minecraft:ender_chest" {
+            let (show, tint) = previews::with(|p| (p.ender, p.ender_tint));
+            if show == Show::Off || !tint {
+                return;
+            }
+            previews::ender_tooltip_colours()
+        } else {
+            return;
+        };
         event.background = background;
         event.border_top = top;
         event.border_bottom = bottom;
     }
 
-    fn client_player_logging_in(&self, _: &mut dyn ClientHost, _: &mut ClientPlayerLoggingInEvent) {
-        self.greet.store(true, Ordering::Relaxed);
+    /// A preview's tooltip a little higher than the game puts it, so the grid covers less of the
+    /// slots around the cursor.
+    fn render_tooltip_pre(
+        &self,
+        host: &dyn ClientHost,
+        event: &mut RenderTooltipPreEvent<'_>,
+    ) -> Flow {
+        let Some(stack) = event.stack else {
+            return Flow::Continue;
+        };
+        let id = stack.item().id(host);
+        let raise = previews::with(|p| {
+            if previews::shulker_colour(&id).is_some() {
+                p.shulker.now(shift(host)).then_some(p.shulker_raise)
+            } else if id == "minecraft:ender_chest" {
+                p.ender.now(shift(host)).then_some(p.ender_raise)
+            } else {
+                None
+            }
+        });
+        // Only while the grid shows: a box with nothing in it has no grid.
+        let grid = id == "minecraft:ender_chest" || previews::contents(host, stack).is_some();
+        if let Some(raise) = raise.filter(|_| grid) {
+            event.place.y -= raise.round() as i32;
+        }
+        Flow::Continue
+    }
+
+    /// Freecam: the movement keys move the camera, not the player.
+    fn movement_input(&self, _: &dyn ClientHost, event: &mut mod_api::MovementInputEvent) {
+        let mut guard = self.state();
+        let Some(cam) = guard.as_mut().and_then(|s| s.freecam.as_mut()) else {
+            return;
+        };
+        let axis = |plus: bool, minus: bool| plus as i32 as f32 - minus as i32 as f32;
+        cam.input = [
+            axis(event.forward_key, event.backward_key),
+            axis(event.left_key, event.right_key),
+            axis(event.jump, event.sneak),
+        ];
+        cam.fast = event.sprint;
+        event.forward = 0.0;
+        event.strafe = 0.0;
+        event.jump = false;
+        event.sneak = false;
+        event.forward_key = false;
+        event.backward_key = false;
+        event.left_key = false;
+        event.right_key = false;
+        event.sprint = false;
+    }
+
+    /// Freecam: the frame is drawn from the flying camera.
+    fn camera_pose(&self, host: &dyn ClientHost, event: &mut mod_api::CameraPoseEvent<'_>) {
+        let guard = self.state();
+        let Some(cam) = guard.as_ref().and_then(|s| s.freecam.as_ref()) else {
+            return;
+        };
+        let now = player_look(host).unwrap_or(cam.frozen);
+        *event.position = cam.at(event.partial);
+        [event.yaw, event.pitch] = cam.look(now);
+    }
+
+    /// Freecam: no water or lava fog from where the player stands.
+    fn camera_submersion(
+        &self,
+        _: &dyn ClientHost,
+        event: &mut mod_api::CameraSubmersionEvent<'_>,
+    ) {
+        let guard = self.state();
+        if let Some(state) = guard.as_ref()
+            && state.freecam.is_some()
+            && state.module(Id::Freecam).bool("clear_fog")
+        {
+            *event.fog_type = mod_api::client::fog::FogType::Atmospheric;
+        }
     }
 
     fn mouse_button_pre(&self, host: &mut dyn ClientHost, event: &mut MouseButtonPreEvent) -> Flow {
+        // Freecam: the player doesn't hit or use anything the camera looks at.
+        if host.playing() && self.state().as_ref().is_some_and(|s| s.freecam.is_some()) {
+            return Flow::Cancel;
+        }
         if event.pressed && (event.button == 0 || event.button == 1) && host.playing() {
             let now = host.millis();
             if let Some(state) = self.state().as_mut() {
@@ -1336,7 +1596,7 @@ impl Hooks for HorizonQol {
             return;
         }
         let size = event.batch.size();
-        let (f3, chat) = overlays(host);
+        let o = overlays(host);
         let hud = state.module(Id::Hud);
         if !hud.enabled {
             return;
@@ -1345,13 +1605,13 @@ impl Hooks for HorizonQol {
             let (true, Some(place)) = (m.enabled, m.place) else {
                 continue;
             };
-            if makes_way(m, hud, f3, chat) {
+            if makes_way(m, hud, o) {
                 continue;
             }
             let Some(content) = hud::content(m, &state.data) else {
                 continue;
             };
-            let scale = m.f32("scale");
+            let scale = m.scale2();
             let unscaled = hud::measure(m, &content, &|s| event.batch.text_width(s));
             let r = hud::rect(place, scale, unscaled, size);
             hud::draw(
@@ -1470,6 +1730,7 @@ impl Hooks for HorizonQol {
             }
         }
         let gui = state.gui.get_or_insert_with(new_gui);
+        gui.shift = shift(host);
         gui.profiles = state.profiles.iter().map(|(n, _)| n.clone()).collect();
         gui.active_profile = state.active_profile.clone();
         if !gui.rebind.is_empty() {
@@ -1500,6 +1761,7 @@ impl Hooks for HorizonQol {
             ("voice_status", status, colour),
             ("voice_group", group.0, group.1),
             ("hud_note", " ".to_owned(), 0),
+            ("freecam_note", " ".to_owned(), 0),
         ];
         gui.meter = voice_on.then_some((snap.level_db, snap.threshold_db));
         gui.draw(
@@ -1652,7 +1914,7 @@ impl Hooks for HorizonQol {
 
 #[cfg(test)]
 mod tests {
-    use super::{Id, key_label, makes_way, modules};
+    use super::{Id, Overlays, key_label, makes_way, modules};
 
     #[test]
     fn elements_make_way_for_f3_and_the_chat_by_their_rule() {
@@ -1668,10 +1930,15 @@ mod tests {
         let get = |mods: &Vec<modules::Module>, id: Id| {
             let hud = mods.iter().find(|m| m.id == Id::Hud).unwrap();
             let m = mods.iter().find(|m| m.id == id).unwrap();
+            let on = |f3, chat| Overlays {
+                f3,
+                chat,
+                ..Overlays::default()
+            };
             (
-                makes_way(m, hud, true, false),
-                makes_way(m, hud, false, true),
-                makes_way(m, hud, false, false),
+                makes_way(m, hud, on(true, false)),
+                makes_way(m, hud, on(false, true)),
+                makes_way(m, hud, on(false, false)),
             )
         };
         // The HUD module's defaults: make way for F3, stay over the chat.

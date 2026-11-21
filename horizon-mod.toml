@@ -100,3 +100,28 @@ bindings = [
   { name = "unit", ty = "f32", value = "unit" },
   { name = "out", ty = "&mut Vec<horizon_client::mesher::Vertex>", value = "&mut *out" },
 ]
+
+# The Mods screen lists native mods without their icon.png: Horizon QoL's row gets its logo.
+[[native.mixin]]
+id = "mod_icon"
+target = "horizon_client::game::native_hooks::Game<'_>::list_native_mods"
+kind = "AFTER_CALL"
+selector = "self.native_page_settings"
+require = 1
+ordinal = 0
+helper = "src/mixins/mod_icon.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+]
+
+# The Scoreboard module: the sidebar where the HUD editor put it, scaled and restyled.
+[[native.mixin]]
+id = "scoreboard"
+target = "horizon_client::game::scoreboard::Game<'_>::draw_scoreboard"
+kind = "HEAD"
+cancellable = true
+helper = "src/mixins/scoreboard.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "batch", ty = "&mut horizon_client::hud::HudBatch", value = "&mut *batch" },
+]

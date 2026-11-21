@@ -22,6 +22,12 @@ pub struct Shared {
     pub shulker_tint: bool,
     /// Whether the game's own "64 x Oak Leaves" lines go while the grid shows.
     pub shulker_hide_list: bool,
+    /// How far up each preview's tooltip goes, in GUI pixels, so it covers less of the slots
+    /// around the cursor.
+    pub shulker_raise: f32,
+    pub ender_raise: f32,
+    /// The ender chest's tooltip in its own colours.
+    pub ender_tint: bool,
     pub ender: Show,
     /// The world or server the player is in, as a file name; None outside a world.
     pub session: Option<String>,
@@ -113,7 +119,8 @@ pub fn contents(host: &dyn Host, stack: &ItemStack) -> Option<Vec<Option<ItemSta
     any.then_some(slots)
 }
 
-/// Whether item id `id` is a shulker box, and its dye colour when it has one.
+/// Whether item id `id` is a shulker box, and its colour when it is dyed: the main colour of
+/// the dyed box's own texture, not the dye's.
 pub fn shulker_colour(id: &str) -> Option<Option<u32>> {
     let name = id.strip_prefix("minecraft:")?;
     if name == "shulker_box" {
@@ -121,31 +128,32 @@ pub fn shulker_colour(id: &str) -> Option<Option<u32>> {
     }
     let dye = name.strip_suffix("_shulker_box")?;
     let colour = match dye {
-        "white" => 0xFFF9FFFE,
-        "orange" => 0xFFF9801D,
-        "magenta" => 0xFFC74EBD,
-        "light_blue" => 0xFF3AB3DA,
-        "yellow" => 0xFFFED83D,
-        "lime" => 0xFF80C71F,
-        "pink" => 0xFFF38BAA,
-        "gray" => 0xFF474F52,
-        "light_gray" => 0xFF9D9D97,
-        "cyan" => 0xFF169C9C,
-        "purple" => 0xFF8932B8,
-        "blue" => 0xFF3C44AA,
-        "brown" => 0xFF835432,
-        "green" => 0xFF5E7C16,
-        "red" => 0xFFB02E26,
-        "black" => 0xFF1D1D21,
+        "white" => 0xFFD8DDDE,
+        "orange" => 0xFFEB6C0B,
+        "magenta" => 0xFFAE3BA6,
+        "light_blue" => 0xFF34A8D7,
+        "yellow" => 0xFFF9C21F,
+        "lime" => 0xFF66AE18,
+        "pink" => 0xFFE87DA2,
+        "gray" => 0xFF393C41,
+        "light_gray" => 0xFF7F7F76,
+        "cyan" => 0xFF157C89,
+        "purple" => 0xFF6C2299,
+        "blue" => 0xFF2D2F8E,
+        "brown" => 0xFF6C4425,
+        "green" => 0xFF536A1F,
+        "red" => 0xFF912321,
+        "black" => 0xFF1B1B1F,
         _ => return None,
     };
     Some(Some(colour))
 }
 
-/// The plain shulker box's own purple.
-pub const SHULKER_PURPLE: u32 = 0xFF976997;
-/// The ender chest's dark green-black.
-pub const ENDER_GREEN: u32 = 0xFF1E3A36;
+/// The plain shulker box's own lavender purple.
+pub const SHULKER_PURPLE: u32 = 0xFF8E6491;
+/// The ender chest's obsidian green-black, and the teal of its eye.
+pub const ENDER_GREEN: u32 = 0xFF1B3833;
+pub const ENDER_EYE: u32 = 0xFF2E8B78;
 
 /// The size of a 27-slot grid in GUI pixels.
 pub fn grid_size() -> [f32; 2] {
@@ -173,14 +181,11 @@ pub fn draw_grid(
     tint: Option<u32>,
 ) {
     let [w, h] = grid_size();
-    let panel = match tint {
-        Some(t) => mix(0xFFC6C6C6, t, 0.6),
-        None => 0xFFC6C6C6,
-    };
+    let panel = tint.unwrap_or(0xFFC6C6C6);
     // The panel, with the game's light top-left and dark bottom-right edges.
     draw.fill([at[0], at[1], w, h], panel);
-    draw.fill([at[0], at[1], w, 1.0], mix(panel, 0xFFFFFFFF, 0.6));
-    draw.fill([at[0], at[1], 1.0, h], mix(panel, 0xFFFFFFFF, 0.6));
+    draw.fill([at[0], at[1], w, 1.0], mix(panel, 0xFFFFFFFF, 0.35));
+    draw.fill([at[0], at[1], 1.0, h], mix(panel, 0xFFFFFFFF, 0.35));
     draw.fill(
         [at[0], at[1] + h - 1.0, w, 1.0],
         mix(panel, 0xFF000000, 0.45),
@@ -192,10 +197,19 @@ pub fn draw_grid(
     for i in 0..SLOTS {
         let x = at[0] + PAD + (i % COLUMNS) as f32 * SLOT;
         let y = at[1] + PAD + (i / COLUMNS) as f32 * SLOT;
-        // A slot: dark top-left, light bottom-right, grey inside.
-        draw.fill([x, y, SLOT, SLOT], 0xFFFFFFFF);
-        draw.fill([x, y, SLOT - 1.0, SLOT - 1.0], 0xFF373737);
-        draw.fill([x + 1.0, y + 1.0, SLOT - 2.0, SLOT - 2.0], 0xFF8B8B8B);
+        // A slot: dark top-left, light bottom-right, and inside grey, or a darker shade of the
+        // panel's colour on a coloured one.
+        let [light, dark, inside] = match tint {
+            Some(t) => [
+                mix(t, 0xFFFFFFFF, 0.35),
+                mix(t, 0xFF000000, 0.6),
+                mix(t, 0xFF000000, 0.3),
+            ],
+            None => [0xFFFFFFFF, 0xFF373737, 0xFF8B8B8B],
+        };
+        draw.fill([x, y, SLOT, SLOT], light);
+        draw.fill([x, y, SLOT - 1.0, SLOT - 1.0], dark);
+        draw.fill([x + 1.0, y + 1.0, SLOT - 2.0, SLOT - 2.0], inside);
     }
     for (i, item) in items.iter().enumerate().take(SLOTS) {
         let Some(stack) = item else { continue };
@@ -263,10 +277,19 @@ pub fn list_lines(lines: &[String], counts: &[usize]) -> Option<(usize, usize)> 
 /// (background, top border, bottom border), ARGB.
 pub fn tooltip_colours(c: u32) -> (u32, u32, u32) {
     let rgb = |v: u32| v & 0x00FF_FFFF;
-    let background = rgb(mix(c, 0xFF000000, 0.78)) | 0xF000_0000;
-    let top = rgb(mix(c, 0xFFFFFFFF, 0.1)) | 0xFF00_0000;
-    let bottom = rgb(mix(c, 0xFF000000, 0.45)) | 0xFF00_0000;
+    let background = rgb(mix(c, 0xFF000000, 0.75)) | 0xF000_0000;
+    let top = rgb(mix(c, 0xFFFFFFFF, 0.15)) | 0xFF00_0000;
+    let bottom = rgb(mix(c, 0xFF000000, 0.4)) | 0xFF00_0000;
     (background, top, bottom)
+}
+
+/// The ender chest's tooltip box: obsidian black-green, framed in its eye's teal.
+pub fn ender_tooltip_colours() -> (u32, u32, u32) {
+    (0xF00A1311, ENDER_EYE, rgb_dark(ENDER_EYE))
+}
+
+fn rgb_dark(c: u32) -> u32 {
+    mix(c, 0xFF000000, 0.5)
 }
 
 /// The message an ender chest shows before it has been seen here.
@@ -561,11 +584,11 @@ mod tests {
         assert_eq!(shulker_colour("minecraft:shulker_box"), Some(None));
         assert_eq!(
             shulker_colour("minecraft:red_shulker_box"),
-            Some(Some(0xFFB02E26))
+            Some(Some(0xFF912321))
         );
         assert_eq!(
             shulker_colour("minecraft:light_gray_shulker_box"),
-            Some(Some(0xFF9D9D97))
+            Some(Some(0xFF7F7F76))
         );
         assert_eq!(shulker_colour("minecraft:ender_chest"), None);
         assert_eq!(shulker_colour("mymod:red_shulker_box"), None);

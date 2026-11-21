@@ -16,9 +16,12 @@ Minecraft: Java Edition 26.3, with a client-style mod menu and a HUD editor.
 - **Mods** in the middle opens the mod menu. Click anywhere on a module's card for its settings;
   the ENABLED / DISABLED bar on the card switches it on and off. Search with the box at the top.
   **Edit HUD** goes back to the editor.
-- **Options > Mods > Horizon QoL > Config** opens the same mod menu while you're in a world. On
-  the title screen, where mods can't open their own screens, it shows the one setting Horizon
-  keeps for the mod (the "Loaded" chat line) and a reminder of where the menu is.
+- **Options > Mods > Horizon QoL > Config** opens the HUD editor while you're in a world (or the
+  mod menu, if its one setting there says so). On the title screen, where mods can't open their
+  own screens, it shows that setting and a reminder of where the menu is.
+- Drag a corner to resize an element (it keeps its shape; the corner stays on the cursor along
+  its diagonal). Hold **Shift** while dragging a corner to set its width and height separately:
+  the width is stretched against the height (the *Width stretch* setting).
 - Right Shift or Esc closes it.
 - Settings are saved when you close the screen, in `config/horizon_qol/settings.txt` in the game
   folder.
@@ -33,6 +36,7 @@ cancels, Backspace leaves it unbound, a right-click puts back the default).
 | --- | --- | --- |
 | Open Mod Menu | Right Shift | Opens the HUD editor |
 | Zoom | C | Zooms while held, or on and off in Toggle mode |
+| Freecam | F6 | Freecam on or off |
 | Toggle Sprint | Y | Sprinting on or off, while Toggle Sprint & Sneak is on |
 | Toggle Sneak | not bound | Sneaking on or off, while Toggle Sprint & Sneak is on |
 | Voice Chat Menu | V | Opens the Voice Chat page (as Simple Voice Chat's menu key does) |
@@ -60,6 +64,8 @@ cancels, Backspace leaves it unbound, a right-click puts back the default).
 | Potion Effects | Active effects with level and time left | Level, time left |
 | Clock | Real-world time | 24-hour, seconds, time zone (UTC offset) |
 | Toggle Sprint & Sneak | Its keys switch sprinting and sneaking on and off | Each on or off, their keys, status on the HUD, keep sprinting after a restart |
+| Scoreboard | The server's sidebar scoreboard as a HUD element you can move and resize | Score numbers (off to start with), title, text shadow, background colour and opacity, title band |
+| Freecam | Its key (F6) flies the camera away from your player, through blocks; your player stays still | Key, speed, level or where-you-look flight, see your player, clear water and lava fog |
 | Zoom | Zoom in; scroll while zooming to zoom more or less | Key, hold or toggle, zoom amount, smooth, scroll to adjust, slower mouse |
 | HUD | Every HUD element on or off, and their rule for F3 and the chat | When F3 is open, when the chat is open |
 | Voice Chat | Proximity voice chat on servers that run Simple Voice Chat | Talk mode, levels, mute, sounds, keys, its pages |
@@ -128,11 +134,13 @@ Profiles are files in `config/horizon_qol/profiles/`, in the same `key=value` te
 
 ![The profiles page](docs/profiles.png)
 
-### F3 and the chat
+### F3, the chat and containers
 
 The **HUD** module (in the HUD tab) is the switch for every HUD element, and says what they do
-while F3 or the chat is open: by default they make way for F3 and stay over the chat. Each
-element's **Visibility** settings follow it (Global) or choose their own (Hide or Show).
+while F3, the chat or a container (a chest, the inventory...) is open: by default they make way
+for F3 and containers and stay over the chat. Each element's **Visibility** settings follow it
+(Global) or choose their own (Hide or Show). Nothing shows on the title screen or while the game
+is paused.
 
 ### Container previews
 
@@ -146,6 +154,10 @@ preview shows what it held the last time you opened one, and the tooltip says ho
 was. It is remembered separately for each world and server, and kept across restarts in
 `horizon-mod-data/horizon_qol/ender_chests/` in the game folder. Until you've opened your ender
 chest in a world or on a server, its tooltip says to open it once.
+
+Both are drawn in their block's colours (a dyed box's own colour, the ender chest's obsidian and
+teal), tooltip box included, and their tooltip sits a little higher than the game's so it covers
+less of the slots around the cursor (*Move the tooltip up*).
 
 Every element on the HUD also has these, in two groups:
 - **Text:** scale, colour, rainbow text and its speed, shadow, brackets `[ ]`, and line alignment.
@@ -223,9 +235,9 @@ cargo install --locked --git https://github.com/horizon-rust/horizon cargo-horiz
    ```
 4. Press **Build** on the Mods page (or **Play**), then join a world.
 
-When the mod has loaded, chat says **"[Horizon QoL] Loaded. Press Right Shift to open the menu."**
-when you join a world. No line means the launcher didn't build it: check step 3 and the build log
-(`native/build.log`).
+When the mod has loaded, Right Shift opens its HUD editor in a world, and the Mods page shows
+Horizon QoL with its logo. If neither, the launcher didn't build it: check step 3 and the build
+log (`native/build.log`).
 
 After a change, run `cargo horizon-mod build` again, copy the new `.hmod` over the old one, and build.
 
@@ -254,7 +266,9 @@ src/voice/                voice chat: its engine, settings file, Opus codec (opu
 src/profiles.rs           profiles: their text (what Export copies), names and files
 src/previews.rs           shulker box and ender chest previews: reading their items, the slot grid, the saved ender chests
 src/ui.rs                 the screen: the HUD editor and the mod menu
-src/mixins/               the mod's own game-side code: the Config button opening its menu
+src/mixins/               the mod's own game-side code: the Config button, the logo on the Mods page, the scoreboard
+src/scoreboard.rs         the Scoreboard module's look, for its game-side code
+src/freecam.rs            Freecam's camera: turning, flying, and where each frame is drawn from
 icon.png                  the logo, drawn from LOGO_ART in src/icons.rs by tools/logo.py
 src/ui/tests.rs           the screen's tests, with a fake draw context that can write SVG previews
 assets/horizon_qol/        the key mappings' names in Options > Controls, and voice chat's textures

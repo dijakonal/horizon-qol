@@ -63,7 +63,7 @@ fn voicechat_hud(
                 group.rgb | 0xFF00_0000,
                 true,
             );
-            batch.scale_since(start, x, y, scale, scale);
+            batch.scale_since(start, x, y, scale[0], scale[1]);
         }
     }
 
@@ -156,7 +156,7 @@ fn voicechat_hud(
                         );
                     }
                 }
-                batch.scale_since(start, x, y0, scale, scale);
+                batch.scale_since(start, x, y0, scale[0], scale[1]);
             }
         }
     }
@@ -211,7 +211,7 @@ fn voicechat_hud(
                     }
                     y += row_h + 1.0;
                 }
-                batch.scale_since(start, x, y0, scale, scale);
+                batch.scale_since(start, x, y0, scale[0], scale[1]);
             }
         }
     }
