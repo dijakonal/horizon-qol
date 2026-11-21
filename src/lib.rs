@@ -10,6 +10,7 @@ mod hud;
 mod icons;
 mod modules;
 mod previews;
+mod profiles;
 mod settings;
 mod ui;
 /// Voice chat, public so its game-side code (`[[native.mixin]]`) reaches it as
@@ -22,8 +23,8 @@ use mod_api::{
     ConfigPath as DataPath, EquipmentSlot, Flow, GuiRenderPostEvent, Hooks, Host, InputKeyEvent,
     ItemPart, ItemTooltipEvent, KeyAction, KeyConflictContext, KeyRegistration,
     MouseButtonPreEvent, MouseScrollingEvent, Registrar, RegistrationContext,
-    ScreenCharTypedPreEvent, ScreenClosingEvent, ScreenKeyPressedPreEvent,
-    ScreenMouseButtonPressedPreEvent, ScreenMouseButtonReleasedPreEvent,
+    RenderTooltipTextureEvent, ScreenCharTypedPreEvent, ScreenClosingEvent,
+    ScreenKeyPressedPreEvent, ScreenMouseButtonPressedPreEvent, ScreenMouseButtonReleasedPreEvent,
     ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent, ScreenRenderPostEvent,
     ScreenTransparentBackgroundEvent, Text, TooltipComponentDrawEvent, TooltipComponentEvent, Zoom,
     ZoomEvent,
@@ -112,6 +113,10 @@ struct State {
     last_rotation: Option<[f32; 2]>,
     /// Works out the keyboard layout from the player's typing, for Keystrokes' Auto layout.
     layout: hud::keyboard::Detector,
+    /// The profile in use, by name: changes save to it too.
+    active_profile: Option<String>,
+    /// The saved profiles: name and file name, by name.
+    profiles: Vec<(String, String)>,
 }
 
 impl State {
@@ -153,6 +158,8 @@ impl HorizonQol {
             sprint_toggled: false,
             sneak_held: false,
             sneak_toggled: false,
+            active_profile: None,
+            profiles: Vec::new(),
             zoom_toggled: false,
             zoom: None,
             voice_synced: None,
@@ -209,23 +216,7 @@ impl HorizonQol {
     }
 }
 
-/// The key a mapping is bound to, as the player reads it: `key.keyboard.right.shift` is
-/// "Right Shift".
-fn key_label(key: &str) -> String {
-    let name = key
-        .strip_prefix("key.keyboard.")
-        .or_else(|| key.strip_prefix("key.mouse."))
-        .unwrap_or(key);
-    name.split('.')
-        .map(|w| {
-            let mut c = w.chars();
-            c.next()
-                .map(|f| f.to_uppercase().chain(c).collect::<String>())
-                .unwrap_or_default()
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
+use ui::key_label;
 
 fn bound_key(host: &dyn ClientHost) -> String {
     host.mod_key(ID, OPEN_MENU)
@@ -251,44 +242,269 @@ fn load_config(host: &dyn ClientHost, state: &mut State) {
     if let Ok(bytes) = host.config_files().read(&path) {
         let text = String::from_utf8_lossy(&bytes);
         modules::load(&mut state.modules, &text);
+        let lines = settings::parse(&text);
         state.sprint_toggled = state.module(Id::ToggleSprint).bool("remember")
-            && settings::parse(&text)
-                .iter()
-                .any(|(k, v)| k == SPRINT_STATE && v == "true");
+            && lines.iter().any(|(k, v)| k == SPRINT_STATE && v == "true");
+        state.active_profile = lines
+            .iter()
+            .find(|(k, _)| k == ACTIVE_PROFILE)
+            .map(|(_, v)| profiles::clean_name(v))
+            .filter(|n| !n.is_empty());
+    }
+    state.profiles = list_profiles(host);
+    if state
+        .active_profile
+        .as_ref()
+        .is_some_and(|a| !state.profiles.iter().any(|(n, _)| n == a))
+    {
+        state.active_profile = None;
     }
 }
 
+/// The config line naming the profile in use.
+const ACTIVE_PROFILE: &str = "profile.active";
+
+/// Saves the settings, and to the profile in use when there is one.
 fn save_config(host: &dyn ClientHost, state: &State) {
     if let Ok(path) = ConfigPath::new(CONFIG) {
         let mut text = modules::save(&state.modules);
         text += &format!("{SPRINT_STATE}={}\n", state.sprint_toggled);
+        if let Some(name) = &state.active_profile {
+            text += &format!("{ACTIVE_PROFILE}={name}\n");
+        }
         let _ = host.config_files().write(&path, text.as_bytes());
     }
+    if let Some(name) = &state.active_profile
+        && let Some((_, file)) = state.profiles.iter().find(|(n, _)| n == name)
+    {
+        let text = profiles::text(name, &state.modules, &current_keys(host));
+        write_profile(host, file, &text);
+    }
+}
+
+/// The mod's Controls mappings, in the order the menu lists them.
+const MAPPINGS: [&str; 9] = [
+    OPEN_MENU,
+    ZOOM,
+    modules::MAP_SPRINT,
+    modules::MAP_SNEAK,
+    voice::engine::KEY_MENU,
+    voice::engine::KEY_PTT,
+    voice::engine::KEY_WHISPER,
+    voice::engine::KEY_MUTE,
+    voice::engine::KEY_DISABLE,
+];
+
+/// The key each of the mod's mappings is bound to, by its key name; one chosen in the menu that
+/// the game hasn't bound yet is the one chosen.
+fn current_keys(host: &dyn ClientHost) -> Vec<(&'static str, String)> {
+    let pending = REBINDS.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    MAPPINGS
+        .into_iter()
+        .filter_map(|id| {
+            let chosen = pending
+                .iter()
+                .rev()
+                .find(|(m, _)| m == id)
+                .map(|(_, k)| k.clone());
+            let key = match chosen {
+                Some(Some(key)) => Some(key),
+                // Back to its default: the game says which that is once it has bound it.
+                Some(None) | None => host.mod_key(ID, id).map(|(k, _)| k),
+            }?;
+            Some((id, key))
+        })
+        .collect()
 }
 
 /// The key each of the mod's Controls mappings is bound to, as the menu shows it.
 fn binds(host: &dyn ClientHost) -> Vec<(&'static str, String)> {
-    [
-        OPEN_MENU,
-        ZOOM,
-        modules::MAP_SPRINT,
-        modules::MAP_SNEAK,
-        voice::engine::KEY_MENU,
-        voice::engine::KEY_PTT,
-        voice::engine::KEY_WHISPER,
-        voice::engine::KEY_MUTE,
-        voice::engine::KEY_DISABLE,
-    ]
-    .into_iter()
-    .map(|id| {
-        let key = host.mod_key(ID, id).map(|(k, _)| k);
-        let label = match key.as_deref() {
-            None | Some("key.keyboard.unknown") => "Not bound".to_owned(),
-            Some(k) => key_label(k),
-        };
-        (id, label)
-    })
-    .collect()
+    let keys = current_keys(host);
+    MAPPINGS
+        .into_iter()
+        .map(|id| {
+            let label = keys
+                .iter()
+                .find(|(m, _)| *m == id)
+                .map_or_else(|| "Not bound".to_owned(), |(_, k)| key_label(k));
+            (id, label)
+        })
+        .collect()
+}
+
+/// The profiles in the profiles folder: name and file name, by name. An emptied file is a
+/// deleted profile (the mod can't delete files).
+fn list_profiles(host: &dyn ClientHost) -> Vec<(String, String)> {
+    let files = host.config_files();
+    let Ok(folder) = ConfigPath::new(profiles::FOLDER) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    let mut after: Option<String> = None;
+    while let Ok(page) = files.list(&folder, after.as_deref(), 256) {
+        let Some(last) = page.last() else { break };
+        after = Some(last.name.clone());
+        for entry in page {
+            if entry.stat.kind != mod_api::ConfigEntryKind::File
+                || entry.stat.len == 0
+                || !entry.name.ends_with(".txt")
+            {
+                continue;
+            }
+            let Some(text) = read_profile(host, &entry.name) else {
+                continue;
+            };
+            let Some(parsed) = profiles::parse(&text) else {
+                continue;
+            };
+            let stem = entry.name.trim_end_matches(".txt").to_owned();
+            found.push((parsed.name.unwrap_or(stem), entry.name));
+        }
+    }
+    found.sort_by_key(|(n, _)| n.to_lowercase());
+    found
+}
+
+fn profile_path(file: &str) -> Option<ConfigPath> {
+    ConfigPath::new(&format!("{}/{file}", profiles::FOLDER)).ok()
+}
+
+fn read_profile(host: &dyn ClientHost, file: &str) -> Option<String> {
+    let bytes = host.config_files().read(&profile_path(file)?).ok()?;
+    (!bytes.is_empty()).then(|| String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn write_profile(host: &dyn ClientHost, file: &str, text: &str) -> bool {
+    profile_path(file).is_some_and(|p| host.config_files().write(&p, text.as_bytes()).is_ok())
+}
+
+/// Puts profile text `text` in use, keys included: the modules as it has them, and its keys
+/// queued for the game to bind.
+fn use_profile(state: &mut State, text: &str) {
+    profiles::apply(&mut state.modules, text);
+    if let Some(parsed) = profiles::parse(text) {
+        let mut queue = REBINDS.lock().unwrap_or_else(|e| e.into_inner());
+        for (mapping, key) in parsed.keys {
+            if MAPPINGS.contains(&mapping.as_str()) {
+                queue.push((mapping, Some(key)));
+            }
+        }
+    }
+}
+
+/// Does what the profiles page asked: what it did, and the colour to say it in.
+fn profile_action(
+    host: &dyn ClientHost,
+    state: &mut State,
+    action: ui::ProfileAction,
+) -> (String, u32) {
+    use ui::ProfileAction as A;
+    const GOOD: u32 = 0xFF22C55E;
+    const BAD: u32 = 0xFFEF4444;
+    let names: Vec<String> = state.profiles.iter().map(|(n, _)| n.clone()).collect();
+    let pick = |i: usize| state.profiles.get(i).cloned();
+    let said = match action {
+        A::New(name) => {
+            let name = profiles::unique(&name, &names);
+            let file = profiles::file_name(&name);
+            let text = profiles::text(&name, &state.modules, &current_keys(host));
+            if !write_profile(host, &file, &text) {
+                return ("Couldn't save the profile.".to_owned(), BAD);
+            }
+            state.active_profile = Some(name.clone());
+            (format!("Saved \"{name}\"; changes now save to it."), GOOD)
+        }
+        A::Load(i) => {
+            let Some((name, file)) = pick(i) else {
+                return ("That profile is gone.".to_owned(), BAD);
+            };
+            let Some(text) = read_profile(host, &file) else {
+                return (format!("Couldn't read \"{name}\"."), BAD);
+            };
+            use_profile(state, &text);
+            state.active_profile = Some(name.clone());
+            (format!("Loaded \"{name}\"."), GOOD)
+        }
+        A::Export(which) => {
+            let (name, text) = match which.and_then(pick) {
+                Some((name, file)) => {
+                    let Some(text) = read_profile(host, &file) else {
+                        return (format!("Couldn't read \"{name}\"."), BAD);
+                    };
+                    (name, text)
+                }
+                None => {
+                    let name = state
+                        .active_profile
+                        .clone()
+                        .unwrap_or_else(|| "My settings".to_owned());
+                    let text = profiles::text(&name, &state.modules, &current_keys(host));
+                    (name, text)
+                }
+            };
+            if host.set_clipboard_text(&text) {
+                (format!("Copied \"{name}\" to the clipboard."), GOOD)
+            } else {
+                ("Couldn't reach the clipboard.".to_owned(), BAD)
+            }
+        }
+        A::Import => {
+            let Some(text) = host.clipboard_text() else {
+                return ("The clipboard is empty.".to_owned(), BAD);
+            };
+            let Some(parsed) = profiles::parse(&text) else {
+                return (
+                    "The clipboard has no Horizon QoL profile in it.".to_owned(),
+                    BAD,
+                );
+            };
+            let name = profiles::unique(parsed.name.as_deref().unwrap_or("Imported"), &names);
+            use_profile(state, &text);
+            let file = profiles::file_name(&name);
+            let keys: Vec<(&str, String)> = MAPPINGS
+                .into_iter()
+                .filter_map(|m| {
+                    let key = parsed
+                        .keys
+                        .iter()
+                        .find(|(k, _)| k == m)
+                        .map(|(_, v)| v.clone());
+                    key.or_else(|| host.mod_key(ID, m).map(|(k, _)| k))
+                        .map(|k| (m, k))
+                })
+                .collect();
+            if !write_profile(host, &file, &profiles::text(&name, &state.modules, &keys)) {
+                return ("Couldn't save the profile.".to_owned(), BAD);
+            }
+            state.active_profile = Some(name.clone());
+            (format!("Imported and loaded \"{name}\"."), GOOD)
+        }
+        A::Delete(i) => {
+            let Some((name, file)) = pick(i) else {
+                return ("That profile is gone.".to_owned(), BAD);
+            };
+            if !write_profile(host, &file, "") {
+                return (format!("Couldn't delete \"{name}\"."), BAD);
+            }
+            if state.active_profile.as_ref() == Some(&name) {
+                state.active_profile = None;
+            }
+            (format!("Deleted \"{name}\"."), GOOD)
+        }
+    };
+    state.profiles = list_profiles(host);
+    save_config(host, state);
+    said
+}
+
+/// Keys chosen in the menu for the mod's Controls mappings, by mapping id: the new key, or None
+/// for its default. The game-side tick (`src/voice/mixins/tick.rs`) takes them, binds them as
+/// Controls does and saves them.
+static REBINDS: Mutex<Vec<(String, Option<String>)>> = Mutex::new(Vec::new());
+
+/// The keys chosen in the menu since the last call, for the game to bind.
+pub fn take_rebinds() -> Vec<(String, Option<String>)> {
+    std::mem::take(&mut *REBINDS.lock().unwrap_or_else(|e| e.into_inner()))
 }
 
 fn unix_seconds() -> u64 {
@@ -772,7 +988,11 @@ fn voice_slots(host: &dyn ClientHost, state: &State) {
                 0
             },
             limit: m.f32("limit").max(1.0) as usize,
-            names: m.bool("names"),
+            names: if id == Id::VoiceStatus {
+                m.choice("style") == 1
+            } else {
+                m.bool("names")
+            },
         }
     };
     voice::set_hud_slots([
@@ -901,15 +1121,17 @@ impl Hooks for HorizonQol {
         // The previews' settings, and the ender chest remembered for this world or server.
         let shulker = state.module(Id::ShulkerPreview);
         let ender = state.module(Id::EnderPreview);
-        let (s_show, s_tint) = (
+        let (s_show, s_tint, s_hide) = (
             Show::from(shulker.enabled, shulker.choice("show")),
             shulker.bool("tint"),
+            shulker.bool("hide_list"),
         );
         let e_show = Show::from(ender.enabled, ender.choice("show"));
         let session = session_file(host);
         let changed = previews::with(|p| {
             p.shulker = s_show;
             p.shulker_tint = s_tint;
+            p.shulker_hide_list = s_hide;
             p.ender = e_show;
             let changed = p.session != session;
             if changed {
@@ -941,19 +1163,24 @@ impl Hooks for HorizonQol {
             flip(modules::MAP_SNEAK),
             flip(ZOOM),
         );
-        if sprint_key && state.on(Id::ToggleSprint) {
+        let toggles = state.module(Id::ToggleSprint);
+        let (sprint_on, sneak_on) = (
+            toggles.enabled && toggles.bool("sprint"),
+            toggles.enabled && toggles.bool("sneak"),
+        );
+        if sprint_key && sprint_on {
             state.sprint_toggled = !state.sprint_toggled;
         }
-        if sneak_key && state.on(Id::ToggleSneak) {
+        if sneak_key && sneak_on {
             state.sneak_toggled = !state.sneak_toggled;
         }
         if zoom_key && state.module(Id::Zoom).choice("key_mode") == 1 {
             state.zoom_toggled = !state.zoom_toggled;
         }
-        if !state.on(Id::ToggleSprint) {
+        if !sprint_on {
             state.sprint_toggled = false;
         }
-        if !state.on(Id::ToggleSneak) {
+        if !sneak_on {
             state.sneak_toggled = false;
         }
         state.data.sprint_toggled = state.sprint_toggled;
@@ -1008,10 +1235,29 @@ impl Hooks for HorizonQol {
 
     /// The hint to hold Shift, for a preview that waits for it.
     fn item_tooltip(&self, host: &dyn ClientHost, event: &mut ItemTooltipEvent<'_>) {
+        let id = event.stack.item().id(host);
+        // A shulker box whose grid shows: the game's own list of its items goes.
+        if previews::shulker_colour(&id).is_some() {
+            let (show, hide) = previews::with(|p| (p.shulker, p.shulker_hide_list));
+            if hide
+                && show.now(shift(host))
+                && let Some(items) = previews::contents(host, event.stack)
+            {
+                let counts: Vec<usize> =
+                    items.iter().flatten().map(|s| s.count() as usize).collect();
+                let texts: Vec<String> = event
+                    .lines
+                    .iter()
+                    .map(|(t, _)| previews::plain(t))
+                    .collect();
+                if let Some((at, len)) = previews::list_lines(&texts, &counts) {
+                    event.lines.drain(at..at + len);
+                }
+            }
+        }
         if shift(host) {
             return;
         }
-        let id = event.stack.item().id(host);
         let module = if previews::shulker_colour(&id).is_some() {
             Id::ShulkerPreview
         } else if id == "minecraft:ender_chest" {
@@ -1037,6 +1283,28 @@ impl Hooks for HorizonQol {
                 event.lines.push((Text::literal(line), 0xFF808080));
             }
         }
+    }
+
+    /// A shulker box's tooltip box in the box's own colour.
+    fn render_tooltip_texture(
+        &self,
+        host: &dyn ClientHost,
+        event: &mut RenderTooltipTextureEvent<'_>,
+    ) {
+        let Some(stack) = event.stack else { return };
+        let id = stack.item().id(host);
+        let Some(colour) = previews::shulker_colour(&id) else {
+            return;
+        };
+        let (show, tint) = previews::with(|p| (p.shulker, p.shulker_tint));
+        if show == Show::Off || !tint || event.texture.is_some() {
+            return;
+        }
+        let (background, top, bottom) =
+            previews::tooltip_colours(colour.unwrap_or(previews::SHULKER_PURPLE));
+        event.background = background;
+        event.border_top = top;
+        event.border_bottom = bottom;
     }
 
     fn client_player_logging_in(&self, _: &mut dyn ClientHost, _: &mut ClientPlayerLoggingInEvent) {
@@ -1188,8 +1456,30 @@ impl Hooks for HorizonQol {
         let Some(state) = guard.as_mut() else {
             return;
         };
+        // The profiles page: its list when it opens, and what it asked for.
         let gui = state.gui.get_or_insert_with(new_gui);
-        gui.binds = binds;
+        let wanted = std::mem::take(&mut gui.profiles_wanted);
+        let action = gui.profile_action.take();
+        if wanted {
+            state.profiles = list_profiles(host);
+        }
+        if let Some(action) = action {
+            let note = profile_action(host, state, action);
+            if let Some(gui) = state.gui.as_mut() {
+                gui.note = Some(note);
+            }
+        }
+        let gui = state.gui.get_or_insert_with(new_gui);
+        gui.profiles = state.profiles.iter().map(|(n, _)| n.clone()).collect();
+        gui.active_profile = state.active_profile.clone();
+        if !gui.rebind.is_empty() {
+            REBINDS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .extend(gui.rebind.drain(..).map(|(m, k)| (m.to_owned(), k)));
+        } else {
+            gui.binds = binds;
+        }
         // The Voice Chat page's live rows: the connection, the group, the microphone.
         let snap = voice::engine::qol::snapshot();
         let voice_on = state
@@ -1292,6 +1582,14 @@ impl Hooks for HorizonQol {
         if voice::menu_open(host) {
             return voice::key_pressed(host, event.key, event.modifiers);
         }
+        // A key row waiting for its key takes any key first, the menu's own and Escape too.
+        if !event.repeat
+            && self
+                .with_gui(host, |gui, _| gui.key_pressed(event.key))
+                .unwrap_or(false)
+        {
+            return Flow::Cancel;
+        }
         if !event.repeat && event.key == bound_key(host) {
             self.close.store(true, Ordering::Relaxed);
             return Flow::Cancel;
@@ -1391,6 +1689,7 @@ mod tests {
     fn key_labels_read_as_words() {
         assert_eq!(key_label("key.keyboard.right.shift"), "Right Shift");
         assert_eq!(key_label("key.keyboard.f8"), "F8");
-        assert_eq!(key_label("key.mouse.left"), "Left");
+        assert_eq!(key_label("key.mouse.left"), "Mouse Left");
+        assert_eq!(key_label("key.keyboard.unknown"), "Not bound");
     }
 }

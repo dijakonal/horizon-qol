@@ -43,8 +43,8 @@ pub enum Id {
     Armor,
     Effects,
     Clock,
+    /// Toggle Sprint & Sneak (its key is Toggle Sprint's, from before the two were one).
     ToggleSprint,
-    ToggleSneak,
     Zoom,
     ShulkerPreview,
     EnderPreview,
@@ -68,7 +68,6 @@ impl Id {
             Id::Effects => "effects",
             Id::Clock => "clock",
             Id::ToggleSprint => "toggle_sprint",
-            Id::ToggleSneak => "toggle_sneak",
             Id::Zoom => "zoom",
             Id::ShulkerPreview => "shulker_preview",
             Id::EnderPreview => "ender_preview",
@@ -120,7 +119,9 @@ pub struct Module {
 fn hud_settings(own: Vec<Setting>) -> Vec<Setting> {
     let mut s = Vec::new();
     if !own.is_empty() {
-        s.push(Setting::heading("Module"));
+        if !matches!(own[0], Setting::Heading { .. }) {
+            s.push(Setting::heading("Module"));
+        }
         s.extend(own);
     }
     s.extend([
@@ -282,6 +283,8 @@ pub fn defaults() -> Vec<Module> {
                     "hud_note",
                     "Each element can follow these or choose its own, under Visibility",
                 ),
+                Setting::heading("Keys"),
+                Setting::bind(MAP_OPEN_MENU, "Open the HUD editor"),
             ],
         ),
         Module::new(
@@ -437,33 +440,22 @@ pub fn defaults() -> Vec<Module> {
         ),
         Module::new(
             Id::ToggleSprint,
-            "Toggle Sprint",
-            "Press its key to sprint without holding a key; press again to stop.",
+            "Toggle Sprint & Sneak",
+            "Press a key to sprint or sneak without holding a key; press it again to stop.",
             Utility,
             0xFFEF4444,
             false,
             Some([0.5, 1.0]),
             with_default(
                 hud_settings(vec![
-                    Setting::bind(MAP_SPRINT, "Toggle key"),
-                    Setting::toggle("status", "Show status on the HUD", true),
-                    Setting::toggle("remember", "Stay on after a restart", false),
-                ]),
-                "background",
-                off,
-            ),
-        ),
-        Module::new(
-            Id::ToggleSneak,
-            "Toggle Sneak",
-            "Press its key to sneak without holding Shift; press again to stand up.",
-            Utility,
-            0xFF64748B,
-            false,
-            Some([0.5, 0.86]),
-            with_default(
-                hud_settings(vec![
-                    Setting::bind(MAP_SNEAK, "Toggle key"),
+                    Setting::heading("Sprint"),
+                    Setting::toggle("sprint", "Toggle sprint", true),
+                    Setting::bind(MAP_SPRINT, "Sprint key"),
+                    Setting::toggle("remember", "Keep sprinting after a restart", false),
+                    Setting::heading("Sneak"),
+                    Setting::toggle("sneak", "Toggle sneak", true),
+                    Setting::bind(MAP_SNEAK, "Sneak key"),
+                    Setting::heading("Status"),
                     Setting::toggle("status", "Show status on the HUD", true),
                 ]),
                 "background",
@@ -480,7 +472,8 @@ pub fn defaults() -> Vec<Module> {
             None,
             vec![
                 Setting::choice("show", "Show", 0, &["Always", "Hold Shift"]),
-                Setting::toggle("tint", "Tint with the box's colour", true),
+                Setting::toggle("tint", "Tooltip in the box's colour", true),
+                Setting::toggle("hide_list", "Hide the game's list of items", true),
                 Setting::toggle("hint", "Say to hold Shift", true),
             ],
         ),
@@ -559,12 +552,17 @@ pub fn defaults() -> Vec<Module> {
         Module::new(
             Id::VoiceStatus,
             "Voice Status",
-            "Your voice on the HUD: connecting, talking, whispering, muted or off.",
+            "An icon on the HUD for your voice: connecting, talking, whispering, muted or off.",
             Voice,
             0xFF16A34A,
             true,
             Some([0.0, 0.9]),
-            voice_hud_settings(vec![]),
+            voice_hud_settings(vec![Setting::choice(
+                "style",
+                "Show",
+                0,
+                &["Icon", "Icon and text"],
+            )]),
         ),
         Module::new(
             Id::VoiceGroup,
@@ -629,7 +627,20 @@ pub fn save(modules: &[Module]) -> String {
 
 /// Applies a config file's text to the modules; unknown keys and bad values are skipped.
 pub fn load(modules: &mut [Module], text: &str) {
-    for (key, value) in settings::parse(text) {
+    let lines = settings::parse(text);
+    // Toggle Sneak was its own module before it joined Toggle Sprint: a player who had only
+    // it on keeps sneak toggling, without sprint toggling they never had.
+    let was = |k: &str| lines.iter().any(|(key, v)| key == k && v == "true");
+    if was("toggle_sneak.enabled")
+        && !was("toggle_sprint.enabled")
+        && let Some(m) = modules.iter_mut().find(|m| m.id == Id::ToggleSprint)
+    {
+        m.enabled = true;
+        if let Some(s) = m.settings.iter_mut().find(|s| s.key() == "sprint") {
+            s.read("false");
+        }
+    }
+    for (key, value) in lines {
         let Some((id, field)) = key.split_once('.') else {
             continue;
         };
@@ -689,6 +700,21 @@ mod tests {
         assert_eq!(again[1].place, Some(Place { x: 0.4, y: 0.6 }));
         assert!((again[1].f32("scale") - 1.5).abs() < 1e-4);
         assert_eq!(save(&again), text);
+    }
+
+    #[test]
+    fn toggle_sneak_on_its_own_carries_over() {
+        let mut mods = defaults();
+        load(&mut mods, "toggle_sneak.enabled=true\n");
+        let m = mods.iter().find(|m| m.id == Id::ToggleSprint).unwrap();
+        assert!(m.enabled && m.bool("sneak") && !m.bool("sprint"));
+        let mut mods = defaults();
+        load(
+            &mut mods,
+            "toggle_sneak.enabled=true\ntoggle_sprint.enabled=true\n",
+        );
+        let m = mods.iter().find(|m| m.id == Id::ToggleSprint).unwrap();
+        assert!(m.enabled && m.bool("sneak") && m.bool("sprint"));
     }
 
     #[test]

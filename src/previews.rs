@@ -20,6 +20,8 @@ const PAD: f32 = 4.0;
 pub struct Shared {
     pub shulker: Show,
     pub shulker_tint: bool,
+    /// Whether the game's own "64 x Oak Leaves" lines go while the grid shows.
+    pub shulker_hide_list: bool,
     pub ender: Show,
     /// The world or server the player is in, as a file name; None outside a world.
     pub session: Option<String>,
@@ -172,7 +174,7 @@ pub fn draw_grid(
 ) {
     let [w, h] = grid_size();
     let panel = match tint {
-        Some(t) => mix(0xFFC6C6C6, t, 0.45),
+        Some(t) => mix(0xFFC6C6C6, t, 0.6),
         None => 0xFFC6C6C6,
     };
     // The panel, with the game's light top-left and dark bottom-right edges.
@@ -202,6 +204,69 @@ pub fn draw_grid(
         let count = (stack.count() > 1).then(|| stack.count().to_string());
         draw.gui_draw_item_with(stack, [x, y], count.as_deref());
     }
+}
+
+/// A tooltip line as plain text: its literal characters, a translation's fallback or key, and
+/// its arguments and children in order.
+pub fn plain(text: &mod_api::Text) -> String {
+    use mod_api::text::TextContent;
+    let mut out = String::new();
+    match &text.content {
+        TextContent::Literal(s) => out.push_str(s),
+        TextContent::Translatable {
+            key,
+            fallback,
+            arguments,
+        } => {
+            out.push_str(fallback.as_deref().unwrap_or(key));
+            for a in arguments {
+                out.push(' ');
+                out.push_str(&plain(a));
+            }
+        }
+        _ => {}
+    }
+    for c in &text.children {
+        out.push_str(&plain(c));
+    }
+    out
+}
+
+/// Whether `line` has the number `n` in it as a whole number.
+fn has_number(line: &str, n: usize) -> bool {
+    line.split(|c: char| !c.is_ascii_digit())
+        .any(|w| w.parse::<usize>().ok() == Some(n))
+}
+
+/// Where the game's own list of a shulker box's items is in its tooltip, as (first line, line
+/// count): a line per stack for the first five (`counts`, by slot), each with its count, then
+/// "and N more..." when there are more. The list comes after the name, so line 0 is never in it.
+pub fn list_lines(lines: &[String], counts: &[usize]) -> Option<(usize, usize)> {
+    let shown = counts.len().min(5);
+    let more = counts.len().saturating_sub(5);
+    let len = shown + usize::from(more > 0);
+    if len == 0 || lines.len() < len + 1 {
+        return None;
+    }
+    (1..=lines.len() - len)
+        .find(|&at| {
+            counts[..shown]
+                .iter()
+                .enumerate()
+                .all(|(i, &c)| has_number(&lines[at + i], c))
+                && (more == 0 || has_number(&lines[at + shown], more))
+        })
+        .map(|at| (at, len))
+}
+
+/// The tooltip box's colours for a shulker box of colour `c`, as the game's tooltip takes them:
+/// (background, top border, bottom border), ARGB.
+pub fn tooltip_colours(c: u32) -> (u32, u32, u32) {
+    let rgb = |v: u32| v & 0x00FF_FFFF;
+    let background = rgb(mix(c, 0xFF000000, 0.78)) | 0xF000_0000;
+    let top = rgb(mix(c, 0xFFFFFFFF, 0.1)) | 0xFF00_0000;
+    let bottom = rgb(mix(c, 0xFF000000, 0.45)) | 0xFF00_0000;
+    (background, top, bottom)
 }
 
 /// The message an ender chest shows before it has been seen here.
@@ -520,5 +585,31 @@ mod tests {
         assert_eq!(ago(100, 90), "just now");
         assert_eq!(ago(10_000, 10_000 - 300), "5 min ago");
         assert_eq!(ago(200_000, 0), "2 days ago");
+    }
+
+    #[test]
+    fn the_games_item_list_is_found() {
+        let l = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // 27 stacks of 64: five lines, then "and 22 more...", then the F3+H lines.
+        let lines = l(&[
+            "Yellow Shulker Box",
+            "64 x Oak Leaves",
+            "64 x Oak Leaves",
+            "64 x Oak Leaves",
+            "64 x Oak Leaves",
+            "64 x Oak Leaves",
+            "and 22 more...",
+            "minecraft:yellow_shulker_box",
+            "14 component(s)",
+        ]);
+        assert_eq!(list_lines(&lines, &[64; 27]), Some((1, 6)));
+        // Lore first, and a German count format; two stacks so no "more" line.
+        let lines = l(&["Box", "My stuff", "stone\u{d7} 3", "dirt\u{d7} 12"]);
+        assert_eq!(list_lines(&lines, &[3, 12]), Some((2, 2)));
+        assert_eq!(list_lines(&lines, &[4, 12]), None);
+        assert_eq!(list_lines(&lines, &[]), None);
+        let (bg, top, bottom) = tooltip_colours(0xFFFED83D);
+        assert_eq!(bg >> 24, 0xF0);
+        assert!(top & 0xFF0000 > bottom & 0xFF0000);
     }
 }

@@ -1,4 +1,20 @@
 fn voicechat_tick(game: &mut crate::game::Game<'_>) {
+    // Keys chosen in Horizon QoL's menu: bound and saved as Options > Controls does.
+    let rebinds = mod_horizon_qol::take_rebinds();
+    if !rebinds.is_empty() {
+        for (name, key) in &rebinds {
+            match key {
+                Some(key) => {
+                    game.settings
+                        .mods
+                        .set_binding(mod_horizon_qol::MOD_ID, name, key, 0)
+                }
+                None => game.settings.mods.reset_binding(mod_horizon_qol::MOD_ID, name),
+            }
+        }
+        game.apply_settings();
+        game.settings.save(&crate::game::Game::options_path());
+    }
     use mod_horizon_qol::voice::engine as vc;
     crate::game::remote::voicechat_audio::ensure_installed();
     let Some(r) = game.remote.as_ref() else {

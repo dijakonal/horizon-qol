@@ -132,6 +132,20 @@ pub const VOICE_TALKING: &str = "horizon_qol:gui/voice/icon_talking";
 pub const VOICE_GROUP: &str = "horizon_qol:gui/voice/icon_group";
 
 /// A voice row's height and its width before the text.
+/// The size of an icon-only voice row: a 16-pixel square with a 14-pixel icon.
+pub const VOICE_ICON_CELL: f32 = 16.0;
+
+/// A voice row's height and width for rows that aren't faces, when `names` is off and the row
+/// has an icon (an icon-only status), or its text's width otherwise.
+fn voice_cell(r: &VoiceRow, names: bool, text_w: f32) -> [f32; 2] {
+    if !names && r.icon.is_some() {
+        [VOICE_ICON_CELL, VOICE_ICON_CELL]
+    } else {
+        let (h, lead) = voice_row(false, r.icon.is_some());
+        [lead + text_w + 4.0, h]
+    }
+}
+
 fn voice_row(faces: bool, icon: bool) -> (f32, f32) {
     if faces {
         (16.0, 20.0)
@@ -389,12 +403,16 @@ pub fn content(m: &Module, data: &HudData) -> Option<Content> {
             m.bool("twenty_four"),
             m.bool("seconds"),
         )]),
-        Id::ToggleSprint => (m.bool("status") && data.sprint_toggled)
-            .then(|| lines(vec!["Sprinting (Toggled)".into()]))
-            .flatten(),
-        Id::ToggleSneak => (m.bool("status") && data.sneak_toggled)
-            .then(|| lines(vec!["Sneaking (Toggled)".into()]))
-            .flatten(),
+        Id::ToggleSprint => {
+            let mut shown = Vec::new();
+            if m.bool("status") && data.sprint_toggled {
+                shown.push("Sprinting (Toggled)".to_owned());
+            }
+            if m.bool("status") && data.sneak_toggled {
+                shown.push("Sneaking (Toggled)".to_owned());
+            }
+            (!shown.is_empty()).then(|| lines(shown)).flatten()
+        }
         // The voice HUD is drawn by the game (it has the players' faces): see `voice::hud_place`.
         Id::Zoom
         | Id::ShulkerPreview
@@ -422,7 +440,7 @@ pub fn editor_content(m: &Module, data: &HudData) -> Option<Content> {
         Id::VoiceStatus => Some(Content::Voice {
             rows: vec![row("Talking", 0xFF55FF55, Some(VOICE_TALKING))],
             faces: false,
-            names: true,
+            names: m.choice("style") == 1,
         }),
         Id::VoiceGroup => Some(Content::Voice {
             rows: vec![row("Group: Friends", 0xFF55FF55, Some(VOICE_GROUP))],
@@ -527,6 +545,15 @@ pub fn size(content: &Content, pad: f32, width: &dyn Fn(&str) -> f32) -> [f32; 2
                 [s * 3.0 + k.gap * 2.0, h]
             }
         },
+        Content::Voice { rows, faces, names } if !*faces => {
+            let cells: Vec<_> = rows
+                .iter()
+                .map(|r| voice_cell(r, *names, width(&r.text)))
+                .collect();
+            let w = cells.iter().map(|c| c[0]).fold(0.0, f32::max);
+            let h = cells.iter().map(|c| c[1] + 1.0).sum::<f32>() - 1.0;
+            [w.ceil(), h.max(0.0)]
+        }
         Content::Voice { rows, faces, names } => {
             let w = rows
                 .iter()
@@ -852,6 +879,29 @@ pub fn draw(
             MODE_CONTROLLER => draw_controller(&mut o, k, &look, m, data, size),
             _ => draw_wasd(&mut o, k, &look, m, data, size),
         },
+        Content::Voice { rows, faces, names } if !*faces => {
+            let back = if m.bool("background") {
+                with_alpha(0xFF000000, m.f32("background_opacity"))
+            } else {
+                0
+            };
+            let mut y = 0.0;
+            for r in rows {
+                let [w, h] = voice_cell(r, *names, (o.width)(&r.text));
+                o.fill([0.0, y, w, h], back);
+                match r.icon {
+                    Some(icon) if !*names => o.sprite(icon, [1.0, y + 1.0, h - 2.0, h - 2.0]),
+                    icon => {
+                        let lead = if icon.is_some() { 12.0 } else { 0.0 };
+                        if let Some(icon) = icon {
+                            o.sprite(icon, [1.0, y + 1.0, 10.0, 10.0]);
+                        }
+                        o.text(&r.text, lead + 2.0, y + 2.0, r.colour);
+                    }
+                }
+                y += h + 1.0;
+            }
+        }
         Content::Voice { rows, faces, names } => {
             let back = if m.bool("background") {
                 with_alpha(0xFF000000, m.f32("background_opacity"))

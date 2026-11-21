@@ -161,7 +161,8 @@ fn voicechat_hud(
         }
     }
 
-    // The connection and the player's own voice: talking, muted, off.
+    // The connection and the player's own voice: talking, muted, off. Each status with an icon
+    // is the icon alone, in a 16-pixel square, unless the element also shows its text.
     if let Some(slot) = qv::hud_slot(qv::HUD_STATUS) {
         let lines = vc::hud();
         if !lines.is_empty() {
@@ -171,36 +172,44 @@ fn voicechat_hud(
                     let icon = line
                         .icon
                         .filter(|&name| game.gui_sprite_pixels(name).is_some());
+                    if icon.is_some() && !slot.names {
+                        return (icon, true, 16.0, 16.0);
+                    }
                     let icon_w = if icon.is_some() { 12.0 } else { 0.0 };
                     let w = icon_w + game.native_text_width(batch, &line.text) + 4.0;
-                    (icon, icon_w, w)
+                    (icon, false, w, 12.0)
                 })
                 .collect();
             let w = rows.iter().map(|r| r.2).fold(0.0_f32, f32::max);
-            let h = rows.len() as f32 * 13.0 - 1.0;
+            let h = rows.iter().map(|r| r.3 + 1.0).sum::<f32>() - 1.0;
             if let Some(([x, y0], scale)) = qv::hud_place(qv::HUD_STATUS, [w, h], screen) {
                 let start = batch.vertices.len();
-                for (i, (line, (icon, icon_w, row_w))) in lines.iter().zip(rows).enumerate() {
-                    let y = y0 + i as f32 * 13.0;
+                let mut y = y0;
+                for (line, (icon, alone, row_w, row_h)) in lines.iter().zip(rows) {
                     if slot.background >> 24 != 0 {
-                        game.native_fill(batch, [x, y, row_w, 12.0], slot.background);
+                        game.native_fill(batch, [x, y, row_w, row_h], slot.background);
                     }
                     if let Some(name) = icon {
+                        let s = if alone { 14.0 } else { 10.0 };
                         game.native_sprite(
                             batch,
                             name,
                             [0.0, 0.0, 16.0, 16.0],
-                            [x + 1.0, y + 1.0, 10.0, 10.0],
+                            [x + 1.0, y + 1.0, s, s],
                             None,
                         );
                     }
-                    game.native_text(
-                        batch,
-                        &line.text,
-                        [x + icon_w + 2.0, y + 2.0],
-                        line.rgb | 0xFF00_0000,
-                        true,
-                    );
+                    if !alone {
+                        let icon_w = if icon.is_some() { 12.0 } else { 0.0 };
+                        game.native_text(
+                            batch,
+                            &line.text,
+                            [x + icon_w + 2.0, y + 2.0],
+                            line.rgb | 0xFF00_0000,
+                            true,
+                        );
+                    }
+                    y += row_h + 1.0;
                 }
                 batch.scale_since(start, x, y0, scale, scale);
             }

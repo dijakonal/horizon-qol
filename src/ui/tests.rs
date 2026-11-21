@@ -306,7 +306,7 @@ fn tabs_and_search_filter_the_grid() {
     }
     frame(&mut g, SIZE, [0.0, 0.0], &mods, "search");
     let names: Vec<_> = g.visible(&mods).into_iter().map(|i| mods[i].name).collect();
-    assert_eq!(names, ["Toggle Sprint"]);
+    assert_eq!(names, ["Toggle Sprint & Sneak"]);
     assert!(g.backspace());
     let at = centre_of(&g, Target::ClearSearch);
     assert!(g.mouse_pressed(at, 0, &mut mods));
@@ -596,12 +596,54 @@ fn keybind_rows_show_the_bound_key() {
     );
     let r = frame(&mut g, SIZE, [0.0, 0.0], &mods, "options-sprint");
     assert!(r.texts.iter().any(|(t, _)| t == "V"));
-    assert!(r.texts.iter().any(|(t, _)| t == "Toggle key"));
-    options_until(&mut g, &mut mods, Id::ToggleSneak, "options-sneak", |_| {
-        true
-    });
-    let r = frame(&mut g, SIZE, [0.0, 0.0], &mods, "options-sneak");
+    assert!(r.texts.iter().any(|(t, _)| t == "Sprint key"));
     assert!(r.texts.iter().any(|(t, _)| t == "Not bound"));
+
+    // Clicking a key row waits for a key; the key pressed is the new binding.
+    let sprint = mods.iter().position(|m| m.id == Id::ToggleSprint).unwrap();
+    let setting = mods[sprint]
+        .settings
+        .iter()
+        .position(|s| {
+            matches!(
+                s,
+                Setting::Bind {
+                    mapping: "toggle_sprint",
+                    ..
+                }
+            )
+        })
+        .unwrap();
+    let at = centre_of(
+        &g,
+        Target::Bind {
+            module: sprint,
+            setting,
+        },
+    );
+    assert!(g.mouse_pressed(at, 0, &mut mods));
+    let r = frame(&mut g, SIZE, [0.0, 0.0], &mods, "options-sprint");
+    assert!(r.texts.iter().any(|(t, _)| t == "> Press a key <"));
+    assert!(g.key_pressed("key.keyboard.r"));
+    assert!(!g.key_pressed("key.keyboard.t"));
+    assert_eq!(
+        g.rebind,
+        [("toggle_sprint", Some("key.keyboard.r".to_owned()))]
+    );
+    // Escape cancels, Backspace unbinds, a right-click goes back to the default.
+    g.rebind.clear();
+    assert!(g.mouse_pressed(at, 0, &mut mods));
+    assert!(g.key_pressed("key.keyboard.escape"));
+    assert!(g.mouse_pressed(at, 0, &mut mods));
+    assert!(g.key_pressed("key.keyboard.backspace"));
+    assert!(g.mouse_pressed(at, 1, &mut mods));
+    assert_eq!(
+        g.rebind,
+        [
+            ("toggle_sprint", Some("key.keyboard.unknown".to_owned())),
+            ("toggle_sprint", None)
+        ]
+    );
 }
 
 #[test]
@@ -859,4 +901,39 @@ fn the_voice_page_shows_status_meter_and_page_buttons() {
     }
     assert!(g.mouse_pressed(centre_of(&g, t), 0, &mut mods));
     assert_eq!(g.action, Some("groups"));
+}
+
+#[test]
+fn profiles_page_names_saves_and_confirms_deletes() {
+    let mut mods = modules::defaults();
+    let mut g = gui(View::Menu);
+    frame(&mut g, SIZE, [0.0, 0.0], &mods, "menu-before-profiles");
+    let at = centre_of(&g, Target::Profiles);
+    assert!(g.mouse_pressed(at, 0, &mut mods));
+    assert!(g.profiles_wanted);
+    g.profiles = vec!["Bedwars".to_owned(), "PvP".to_owned()];
+    g.active_profile = Some("PvP".to_owned());
+    for c in "Build".chars() {
+        assert!(g.typed(c));
+    }
+    assert!(g.backspace());
+    let r = frame(&mut g, SIZE, [0.0, 0.0], &mods, "profiles");
+    assert!(r.texts.iter().any(|(t, _)| t == "IN USE"));
+    assert!(r.texts.iter().any(|(t, _)| t == "Reload"));
+    assert!(g.mouse_pressed(centre_of(&g, Target::ProfileNew), 0, &mut mods));
+    assert_eq!(
+        g.profile_action.take(),
+        Some(ProfileAction::New("Buil".to_owned()))
+    );
+    assert!(g.profile_name.is_empty());
+
+    // Delete asks once more before it deletes.
+    frame(&mut g, SIZE, [0.0, 0.0], &mods, "profiles");
+    let del = centre_of(&g, Target::ProfileDelete(0));
+    assert!(g.mouse_pressed(del, 0, &mut mods));
+    assert_eq!(g.profile_action, None);
+    let r = frame(&mut g, SIZE, [0.0, 0.0], &mods, "profiles-confirm");
+    assert!(r.texts.iter().any(|(t, _)| t == "Sure?"));
+    assert!(g.mouse_pressed(del, 0, &mut mods));
+    assert_eq!(g.profile_action.take(), Some(ProfileAction::Delete(0)));
 }

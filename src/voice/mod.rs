@@ -205,7 +205,8 @@ pub struct HudSlot {
     pub scale: f32,
     /// Its background, ARGB (0 for none).
     pub background: u32,
-    /// Speakers only: how many players at most, and whether their names show.
+    /// Speakers only: how many players at most, and whether their names show. For the status,
+    /// `names` off draws each status that has an icon as the icon alone.
     pub limit: usize,
     pub names: bool,
 }

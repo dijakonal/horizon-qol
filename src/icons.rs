@@ -206,21 +206,6 @@ pub fn bitmap(icon: Icon) -> &'static [&'static str] {
             "..##....##..",
             ".##....##...",
         ],
-        // Two chevrons, down.
-        Icon::Module(Id::ToggleSneak) => &[
-            "#.........#",
-            ".#.......#.",
-            "..#.....#..",
-            "...#...#...",
-            "....#.#....",
-            ".....#.....",
-            "#.........#",
-            ".#.......#.",
-            "..#.....#..",
-            "...#...#...",
-            "....#.#....",
-            ".....#.....",
-        ],
         // A shulker box: a lid over a body, the shell's gap between.
         Icon::Module(Id::ShulkerPreview) => &[
             ".##########.",

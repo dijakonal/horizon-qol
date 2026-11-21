@@ -25,15 +25,16 @@ Minecraft: Java Edition 26.3, with a client-style mod menu and a HUD editor.
 
 ### Keys
 
-All of the mod's keys are in *Options > Controls* under Horizon QoL, where you change them; each
-module's settings page shows the key it uses.
+All of the mod's keys are in *Options > Controls* under Horizon QoL. Each module's settings page
+shows the keys it uses too, and changes them: click a key, then press the new one (Escape
+cancels, Backspace leaves it unbound, a right-click puts back the default).
 
 | Key | Default | Does |
 | --- | --- | --- |
 | Open Mod Menu | Right Shift | Opens the HUD editor |
 | Zoom | C | Zooms while held, or on and off in Toggle mode |
-| Toggle Sprint | Y | Sprinting on or off, while the module is on |
-| Toggle Sneak | not bound | Sneaking on or off, while the module is on |
+| Toggle Sprint | Y | Sprinting on or off, while Toggle Sprint & Sneak is on |
+| Toggle Sneak | not bound | Sneaking on or off, while Toggle Sprint & Sneak is on |
 | Voice Chat Menu | V | Opens the Voice Chat page (as Simple Voice Chat's menu key does) |
 | Push to Talk | Caps Lock | Talks while held, in push-to-talk mode |
 | Whisper | not bound | Talks to the players right next to you only |
@@ -58,13 +59,12 @@ module's settings page shows the key it uses.
 | Armor Status | Your armor and held item with durability | Vertical or horizontal, durability, as percent, held item |
 | Potion Effects | Active effects with level and time left | Level, time left |
 | Clock | Real-world time | 24-hour, seconds, time zone (UTC offset) |
-| Toggle Sprint | Its key switches sprinting on and off | Key, status on the HUD, stay on after a restart |
-| Toggle Sneak | Its key switches sneaking on and off | Key, status on the HUD |
+| Toggle Sprint & Sneak | Its keys switch sprinting and sneaking on and off | Each on or off, their keys, status on the HUD, keep sprinting after a restart |
 | Zoom | Zoom in; scroll while zooming to zoom more or less | Key, hold or toggle, zoom amount, smooth, scroll to adjust, slower mouse |
 | HUD | Every HUD element on or off, and their rule for F3 and the chat | When F3 is open, when the chat is open |
 | Voice Chat | Proximity voice chat on servers that run Simple Voice Chat | Talk mode, levels, mute, sounds, keys, its pages |
-| Voice Status, Voice Group, Voice Speakers | Voice chat's HUD | Scale, background, most players, names |
-| Shulker Preview | A shulker box's tooltip shows its items as a grid of slots, tinted with the box's colour | Always or hold Shift, tint, Shift hint |
+| Voice Status, Voice Group, Voice Speakers | Voice chat's HUD | Icon or icon and text (status), scale, background, most players, names |
+| Shulker Preview | A shulker box's tooltip shows its items as a grid of slots instead of the game's list, in the box's colour | Always or hold Shift, coloured tooltip, hide the game's list, Shift hint |
 | Ender Chest Preview | An ender chest's tooltip shows your ender chest as it was when you last opened one | Always or hold Shift, when it was last seen, Shift hint |
 
 ### Voice chat
@@ -85,12 +85,13 @@ activation, groups (with passwords), whispering, and per-player volume.
 - **Sounds:** short sounds for connecting and disconnecting, pressing and letting go of push to
   talk, muting and turning voice off, and joining and leaving groups (and someone joining
   yours), each on or off, with a volume.
-- **Keys:** what each key is bound to (change them in Options > Controls).
+- **Keys:** what each key is bound to; click one to change it.
 - **More:** buttons for its Groups, Player volumes and Audio devices pages.
 
 Its HUD is three elements in the **Voice** tab, edited like any other in the HUD editor (drag,
 resize, background, visibility):
-- **Voice Status:** connecting, talking, whispering, muted or off.
+- **Voice Status:** an icon for connecting, talking, whispering, muted or off (or the icon with
+  its words).
 - **Voice Group:** your group.
 - **Voice Speakers:** who's talking and your group's members, with their faces (at most a set
   number, names optional).
@@ -111,6 +112,21 @@ The game draws these, since it has the players' skins, where the editor puts the
   launcher downloads a larger SDK and builds a game patch the first time. It also builds two
   crates.io packages (`aes-gcm` and its dependencies), pinned in `Cargo.lock`. The launcher asks
   before running their build scripts.
+
+### Profiles
+
+The menu's **Profiles** button (above Edit HUD) keeps sets of settings: every module's settings,
+the HUD layout and the mod's keys.
+
+- **Save:** type a name and press Save. That profile is now in use, and changes save to it.
+- **Load:** switches to a profile (its keys too). **Delete** asks once more before it deletes.
+- **Export:** copies a profile, or your settings as they are, to the clipboard as text you can
+  paste in a message.
+- **Import from clipboard:** reads a profile someone sent you, saves it and loads it.
+
+Profiles are files in `config/horizon_qol/profiles/`, in the same `key=value` text.
+
+![The profiles page](docs/profiles.png)
 
 ### F3 and the chat
 
@@ -168,10 +184,11 @@ FPS, Coordinates and Zoom are on to start with.
 ![Keystrokes as a Switch Pro controller](docs/pad-switch_pro.png)
 
 Notes:
-- Toggle Sprint and Toggle Sneak leave the game's own *Toggle Sprint* and *Toggle Sneak* options
-  alone: with the game's option on, the module does nothing, since holding the key would flip it.
-- A mod can read its keys but not change them, so they are rebound in Controls rather than in
-  the menu.
+- Toggle Sprint & Sneak leaves the game's own *Toggle Sprint* and *Toggle Sneak* options
+  alone: with the game's option on, that half does nothing, since holding the key would flip it.
+- The mod API can read a key but not change it, so a key changed in the menu is bound by the
+  mod's game-side tick code (`src/voice/mixins/tick.rs`), the same way Controls binds it, and
+  saved with the game's options. It shows in Controls too.
 - The Clock can't read your computer's time zone through the game, so set yours with the
   time-zone slider (UTC+1 for central Europe, for example).
 
@@ -234,6 +251,7 @@ src/hud.rs                what each HUD element shows, its size, and drawing it 
 src/hud/keyboard.rs       the keyboard layouts and sizes, and Auto's layout detection
 src/hud/pad.rs            the controllers, drawn and shaded from circles and rounded rectangles
 src/voice/                voice chat: its engine, settings file, Opus codec (opus-rs) and game-side code (mixins)
+src/profiles.rs           profiles: their text (what Export copies), names and files
 src/previews.rs           shulker box and ender chest previews: reading their items, the slot grid, the saved ender chests
 src/ui.rs                 the screen: the HUD editor and the mod menu
 src/mixins/               the mod's own game-side code: the Config button opening its menu

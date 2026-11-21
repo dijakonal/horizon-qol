@@ -32,6 +32,7 @@ mod theme {
     pub const TEXT_DIM: u32 = 0xFF9090A0;
     pub const TEXT_FAINT: u32 = 0xFF5C5C6A;
     pub const ON: u32 = 0xFF22C55E;
+    pub const WARN: u32 = 0xFFF59E0B;
     pub const ON_HOVER: u32 = 0xFF3AD673;
     pub const OFF: u32 = 0xFF2A2A33;
     pub const OFF_HOVER: u32 = 0xFF34343F;
@@ -72,9 +73,15 @@ enum Target {
     /// The search box's clear button.
     ClearSearch,
     /// Setting `setting` of module `module`: a switch, or a slider's track.
-    Setting { module: usize, setting: usize },
+    Setting {
+        module: usize,
+        setting: usize,
+    },
     /// An action button of module `module`: setting `setting`.
-    Action { module: usize, setting: usize },
+    Action {
+        module: usize,
+        setting: usize,
+    },
     /// Option `option` of choice setting `setting`.
     Choice {
         module: usize,
@@ -99,7 +106,25 @@ enum Target {
     Element(usize),
     /// Corner `corner` of module `module`'s element: 0 top left, 1 top right, 2 bottom left,
     /// 3 bottom right.
-    Handle { module: usize, corner: u8 },
+    Handle {
+        module: usize,
+        corner: u8,
+    },
+    /// The key row of keybind setting `setting`: click, then press the new key.
+    Bind {
+        module: usize,
+        setting: usize,
+    },
+    /// The sidebar's Profiles button.
+    Profiles,
+    /// The profiles page's Save button, for the name typed.
+    ProfileNew,
+    /// Export the settings as they are.
+    ProfileExportCurrent,
+    ProfileImport,
+    ProfileLoad(usize),
+    ProfileExport(usize),
+    ProfileDelete(usize),
 }
 
 /// What the screen shows.
@@ -114,6 +139,22 @@ pub enum View {
 enum Page {
     Grid,
     Options(usize),
+    Profiles,
+}
+
+/// Something to do with the profiles, for the mod to do (it has the files and the clipboard).
+#[derive(Clone, PartialEq, Debug)]
+pub enum ProfileAction {
+    /// Save the settings as a new profile with this name, and make it the active one.
+    New(String),
+    /// Load profile `index` of [`Gui::profiles`].
+    Load(usize),
+    /// Copy profile `index`, or the settings as they are (None), to the clipboard.
+    Export(Option<usize>),
+    /// Read a profile from the clipboard, save it and load it.
+    Import,
+    /// Delete profile `index`.
+    Delete(usize),
 }
 
 /// A drag in progress.
@@ -169,6 +210,23 @@ pub struct Gui {
     pub meter: Option<(f32, f32)>,
     /// An `Action` button was pressed: its id, for the mod to act on.
     pub action: Option<&'static str>,
+    /// The mapping whose key row waits for a key press.
+    pub capture: Option<&'static str>,
+    /// Keys chosen here, for the mod to bind: a mapping and its new key, or None for its
+    /// default.
+    pub rebind: Vec<(&'static str, Option<String>)>,
+    /// The saved profiles' names, filled in by the mod, and the one in use.
+    pub profiles: Vec<String>,
+    pub active_profile: Option<String>,
+    /// The profiles page opened: the mod reads the profiles folder again.
+    pub profiles_wanted: bool,
+    /// The name typed for a new profile.
+    pub profile_name: String,
+    /// What the last profile action did, and its colour.
+    pub note: Option<(String, u32)>,
+    pub profile_action: Option<ProfileAction>,
+    /// The profile whose Delete was pressed once, waiting for a second press.
+    confirm_delete: Option<usize>,
 }
 
 impl Gui {
@@ -193,6 +251,15 @@ impl Gui {
             info: Vec::new(),
             meter: None,
             action: None,
+            capture: None,
+            rebind: Vec::new(),
+            profiles: Vec::new(),
+            active_profile: None,
+            profiles_wanted: false,
+            profile_name: String::new(),
+            note: None,
+            profile_action: None,
+            confirm_delete: None,
         }
     }
 
@@ -734,6 +801,14 @@ impl Gui {
             p.text(&count, [r[0] + r[2] - cw - 8.0, ty], theme::TEXT_FAINT);
             self.hit(r, Target::Tab(tab));
         }
+        let profiles = [px + 6.0, body_y + body_h - 50.0, SIDEBAR_W - 12.0, 20.0];
+        p.button(
+            profiles,
+            "Profiles",
+            hover(Target::Profiles) || self.page == Page::Profiles,
+            false,
+        );
+        self.hit(profiles, Target::Profiles);
         let edit = [px + 6.0, body_y + body_h - 26.0, SIDEBAR_W - 12.0, 20.0];
         p.button(edit, "Edit HUD", hover(Target::EditHud), true);
         self.hit(edit, Target::EditHud);
@@ -751,6 +826,7 @@ impl Gui {
         match self.page {
             Page::Grid => self.draw_grid(p, content, modules, hover),
             Page::Options(i) => self.draw_options(p, content, modules, i, hover),
+            Page::Profiles => self.draw_profiles(p, content, hover),
         }
         self.clip = None;
         if clipped {
@@ -877,6 +953,139 @@ impl Gui {
             self.hit(bar, Target::Toggle(i));
             self.hit(opts, Target::Options(i));
         }
+    }
+
+    fn draw_profiles(&mut self, p: &mut Paint<'_>, area: [f32; 4], hover: &dyn Fn(Target) -> bool) {
+        let [ax, ay, aw, ah] = area;
+        let top = ay - self.scroll.round();
+        p.text("Profiles", [ax, top + 2.0], theme::TEXT);
+        let about = p.wrap(
+            "A profile keeps every module's settings, the HUD layout and the keys. Changes save \
+             to the profile in use. Export copies one to share; Import reads one you copied.",
+            aw,
+            3,
+        );
+        for (n, line) in about.iter().enumerate() {
+            p.text(line, [ax, top + 14.0 + n as f32 * 10.0], theme::TEXT_DIM);
+        }
+        let mut y = top + 18.0 + about.len() as f32 * 10.0;
+
+        // The name of a new profile, and Save.
+        let save_w = 50.0;
+        let field = [ax, y, aw - save_w - 4.0, 18.0];
+        p.rounded(field, theme::BORDER);
+        p.rounded(
+            [
+                field[0] + 1.0,
+                field[1] + 1.0,
+                field[2] - 2.0,
+                field[3] - 2.0,
+            ],
+            theme::SEARCH,
+        );
+        let fy = field[1] + (field[3] - LINE) / 2.0 + 1.0;
+        if self.profile_name.is_empty() {
+            p.text(
+                "Type a name for a new profile...",
+                [field[0] + 5.0, fy],
+                theme::TEXT_FAINT,
+            );
+        } else {
+            let caret = (self.opened.elapsed().as_millis() / 500).is_multiple_of(2);
+            let shown = format!("{}{}", self.profile_name, if caret { "_" } else { "" });
+            let shown = p.fit(&shown, field[2] - 10.0);
+            p.text(&shown, [field[0] + 5.0, fy], theme::TEXT);
+        }
+        let save = [ax + aw - save_w, y, save_w, 18.0];
+        p.button(save, "Save", hover(Target::ProfileNew), true);
+        self.hit(save, Target::ProfileNew);
+        y += 22.0;
+
+        // Export and Import.
+        let half = ((aw - 4.0) / 2.0).floor();
+        let export = [ax, y, half, 18.0];
+        p.button(
+            export,
+            "Export current",
+            hover(Target::ProfileExportCurrent),
+            false,
+        );
+        self.hit(export, Target::ProfileExportCurrent);
+        let import = [ax + aw - half, y, half, 18.0];
+        p.button(
+            import,
+            "Import from clipboard",
+            hover(Target::ProfileImport),
+            false,
+        );
+        self.hit(import, Target::ProfileImport);
+        y += 22.0;
+        if let Some((note, colour)) = &self.note {
+            let note = p.fit(note, aw);
+            p.text(&note, [ax, y + 1.0], *colour);
+            y += 12.0;
+        }
+
+        y += 4.0;
+        p.text("SAVED PROFILES", [ax + 2.0, y + 2.0], theme::ACCENT);
+        p.fill([ax + 2.0, y + 12.0, aw - 4.0, 1.0], theme::BORDER);
+        y += 17.0;
+        if self.profiles.is_empty() {
+            p.text(
+                "None yet: type a name above and press Save.",
+                [ax + 2.0, y + 2.0],
+                theme::TEXT_FAINT,
+            );
+            y += 14.0;
+        }
+        for (i, name) in self.profiles.clone().iter().enumerate() {
+            let row = [ax, y, aw, ROW_H];
+            p.rounded(row, theme::ROW);
+            let active = self.active_profile.as_deref() == Some(name.as_str());
+            let by = row[1] + 4.0;
+            let bh = ROW_H - 8.0;
+            let mut bx = row[0] + row[2] - 6.0;
+            let sure = self.confirm_delete == Some(i);
+            for (label, target, primary) in [
+                (
+                    if sure { "Sure?" } else { "Delete" },
+                    Target::ProfileDelete(i),
+                    sure,
+                ),
+                ("Export", Target::ProfileExport(i), false),
+                (
+                    if active { "Reload" } else { "Load" },
+                    Target::ProfileLoad(i),
+                    !active,
+                ),
+            ] {
+                let w = p.width(label) + 12.0;
+                bx -= w;
+                let r = [bx, by, w, bh];
+                p.button(r, label, hover(target), primary);
+                self.hit(r, target);
+                bx -= 3.0;
+            }
+            let label_y = row[1] + (ROW_H - LINE) / 2.0 + 1.0;
+            let mut room = bx - row[0] - 14.0;
+            if active {
+                room -= 40.0;
+            }
+            let shown = p.fit(name, room.max(20.0));
+            p.text(&shown, [row[0] + 8.0, label_y], theme::TEXT);
+            if active {
+                let chip = "IN USE";
+                let cx = row[0] + 14.0 + p.width(&shown);
+                let r = [cx, row[1] + 6.0, p.width(chip) + 6.0, 11.0];
+                p.rounded(r, theme::ON);
+                p.text(chip, [r[0] + 3.0, r[1] + 2.0], theme::TEXT);
+            }
+            y += ROW_H + 2.0;
+        }
+
+        let total = y + self.scroll.round() - ay;
+        self.max_scroll = (total - ah).max(0.0);
+        self.scroll = self.scroll.clamp(0.0, self.max_scroll);
     }
 
     fn draw_options(
@@ -1014,15 +1223,30 @@ impl Gui {
                     }
                 }
                 Setting::Bind { mapping, .. } => {
-                    let key = self
-                        .binds
-                        .iter()
-                        .find(|(id, _)| id == mapping)
-                        .map_or("Not bound", |(_, k)| k.as_str())
-                        .to_owned();
-                    let kw = p.width(&key) + 12.0;
+                    let waiting = self.capture == Some(*mapping);
+                    let key = if waiting {
+                        "> Press a key <".to_owned()
+                    } else {
+                        self.binds
+                            .iter()
+                            .find(|(id, _)| id == mapping)
+                            .map_or("Not bound", |(_, k)| k.as_str())
+                            .to_owned()
+                    };
+                    let kw = (p.width(&key) + 12.0).max(60.0);
                     let chip = [row[0] + row[2] - 6.0 - kw, row[1] + 4.0, kw, ROW_H - 8.0];
-                    p.rounded(chip, theme::BORDER);
+                    let t = Target::Bind {
+                        module: i,
+                        setting: s,
+                    };
+                    p.rounded(
+                        chip,
+                        if waiting || hover(t) {
+                            theme::ACCENT
+                        } else {
+                            theme::BORDER
+                        },
+                    );
                     p.rounded(
                         [chip[0] + 1.0, chip[1] + 1.0, chip[2] - 2.0, chip[3] - 2.0],
                         theme::SEARCH,
@@ -1033,13 +1257,20 @@ impl Gui {
                         chip[0],
                         chip[2],
                         chip[1] + 3.0,
-                        if unbound {
+                        if waiting {
+                            theme::ACCENT_HOVER
+                        } else if unbound {
                             theme::TEXT_DIM
                         } else {
                             theme::TEXT
                         },
                     );
-                    let hint = "Change in Options > Controls";
+                    self.hit(row, t);
+                    let hint = if waiting {
+                        "Esc cancels, Backspace unbinds"
+                    } else {
+                        "Click to change, right-click to reset"
+                    };
                     let hw = p.width(hint);
                     let label_end = row[0] + 8.0 + p.width(setting.label()) + 8.0;
                     if chip[0] - 8.0 - hw > label_end {
@@ -1145,9 +1376,31 @@ impl Gui {
 
     /// A press of mouse `button` at `at`: true when the screen took it.
     pub fn mouse_pressed(&mut self, at: [f32; 2], button: i32, modules: &mut [Module]) -> bool {
+        // Waiting for a key: the middle and side buttons are keys too; the others cancel.
+        if let Some(mapping) = self.capture.take() {
+            let key = match button {
+                2 => Some("key.mouse.middle".to_owned()),
+                3..=7 => Some(format!("key.mouse.{}", button + 1)),
+                _ => None,
+            };
+            if let Some(key) = key {
+                self.set_bind(mapping, Some(key));
+            }
+            return true;
+        }
         let Some((_, r, target)) = self.target_at(at) else {
             return false;
         };
+        if let Target::Bind { module, setting } = target
+            && let Setting::Bind { mapping, .. } = modules[module].settings[setting]
+        {
+            match button {
+                0 => self.capture = Some(mapping),
+                1 => self.set_bind(mapping, None),
+                _ => return false,
+            }
+            return true;
+        }
         if button == 1 {
             // Right-click on an element opens its settings.
             if let Target::Element(i) | Target::Handle { module: i, .. } = target {
@@ -1275,6 +1528,62 @@ impl Gui {
                     grab: [at[0] - er[0], at[1] - er[1]],
                 });
             }
+            Target::Bind { .. } => {}
+            Target::Profiles => {
+                self.page = Page::Profiles;
+                self.scroll = 0.0;
+                self.profiles_wanted = true;
+                self.note = None;
+            }
+            Target::ProfileNew => {
+                let name = crate::profiles::clean_name(&self.profile_name);
+                if name.is_empty() {
+                    self.note = Some(("Type a name first.".to_owned(), theme::WARN));
+                } else {
+                    self.profile_action = Some(ProfileAction::New(name));
+                    self.profile_name.clear();
+                }
+            }
+            Target::ProfileExportCurrent => self.profile_action = Some(ProfileAction::Export(None)),
+            Target::ProfileImport => self.profile_action = Some(ProfileAction::Import),
+            Target::ProfileLoad(i) => self.profile_action = Some(ProfileAction::Load(i)),
+            Target::ProfileExport(i) => self.profile_action = Some(ProfileAction::Export(Some(i))),
+            Target::ProfileDelete(i) => {
+                if self.confirm_delete == Some(i) {
+                    self.profile_action = Some(ProfileAction::Delete(i));
+                    self.confirm_delete = None;
+                } else {
+                    self.confirm_delete = Some(i);
+                }
+                return true;
+            }
+        }
+        self.confirm_delete = None;
+        true
+    }
+
+    /// Binds `mapping` to `key` (None: its default) for the mod to apply, and shows it now.
+    fn set_bind(&mut self, mapping: &'static str, key: Option<String>) {
+        if let Some(key) = &key
+            && let Some(row) = self.binds.iter_mut().find(|(id, _)| *id == mapping)
+        {
+            row.1 = key_label(key);
+        }
+        self.rebind.push((mapping, key));
+    }
+
+    /// A key press while the screen is open: true when it chose a key for the row waiting
+    /// for one. Escape cancels; Backspace and Delete leave the mapping unbound.
+    pub fn key_pressed(&mut self, key: &str) -> bool {
+        let Some(mapping) = self.capture.take() else {
+            return false;
+        };
+        match key {
+            "key.keyboard.escape" => {}
+            "key.keyboard.backspace" | "key.keyboard.delete" => {
+                self.set_bind(mapping, Some(UNBOUND.to_owned()))
+            }
+            key => self.set_bind(mapping, Some(key.to_owned())),
         }
         true
     }
@@ -1460,6 +1769,12 @@ impl Gui {
 
     /// A typed character: it goes into the search box while the menu is open.
     pub fn typed(&mut self, c: char) -> bool {
+        if self.view == View::Menu && self.page == Page::Profiles && !c.is_control() {
+            if self.profile_name.chars().count() < crate::profiles::NAME_MAX {
+                self.profile_name.push(c);
+            }
+            return true;
+        }
         if self.view != View::Menu || c.is_control() || self.search.chars().count() >= SEARCH_MAX {
             return false;
         }
@@ -1474,11 +1789,44 @@ impl Gui {
         if self.view != View::Menu {
             return false;
         }
+        if self.page == Page::Profiles {
+            return self.profile_name.pop().is_some();
+        }
         let took = self.search.pop().is_some();
         if took {
             self.scroll = 0.0;
         }
         took
+    }
+}
+
+/// The key name of no key: a mapping bound to it is unbound.
+pub const UNBOUND: &str = "key.keyboard.unknown";
+
+/// The key a mapping is bound to, as the player reads it: `key.keyboard.right.shift` is
+/// "Right Shift"; no key is "Not bound".
+pub fn key_label(key: &str) -> String {
+    if key == UNBOUND {
+        return "Not bound".to_owned();
+    }
+    let name = key
+        .strip_prefix("key.keyboard.")
+        .or_else(|| key.strip_prefix("key.mouse."))
+        .unwrap_or(key);
+    let label = name
+        .split('.')
+        .map(|w| {
+            let mut c = w.chars();
+            c.next()
+                .map(|f| f.to_uppercase().chain(c).collect::<String>())
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    if key.starts_with("key.mouse.") {
+        format!("Mouse {label}")
+    } else {
+        label
     }
 }
 
