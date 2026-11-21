@@ -18,7 +18,7 @@ mixins = "e59da9094f0c2fdda6c627fe9eff22dec6a906f0"
 # The Mods screen's Config button on this mod opens its own menu, in a world.
 [[native.mixin]]
 id = "config_button"
-target = "horizon_client::game::native_hooks::shared::Game<'_>::native_settings_refresh"
+target = "horizon_client::game::native_hooks::Game<'_>::native_settings_refresh"
 kind = "HEAD"
 cancellable = true
 helper = "src/mixins/config_button.rs"
