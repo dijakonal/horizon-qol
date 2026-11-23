@@ -17,6 +17,27 @@ fn voicechat_tick(game: &mut crate::game::Game<'_>) {
         game.apply_settings();
         game.settings.save(&crate::game::Game::options_path());
     }
+    // Horizon QoL's Key Remaps: the game's own keys chosen in its menu, bound as Controls
+    // does and kept in the game's options (None: the mapping's default back).
+    let remaps = mod_horizon_qol::take_remaps();
+    if !remaps.is_empty() {
+        for (name, key) in &remaps {
+            let key = match key {
+                Some(key) => key.clone(),
+                None => {
+                    if let Some((_, default, _)) =
+                        horizon_client::keybinds::all_mappings().find(|m| m.0 == name)
+                    {
+                        default.to_string()
+                    } else {
+                        "key.keyboard.unknown".to_owned()
+                    }
+                }
+            };
+            game.settings.keys.set(name, &key);
+        }
+        game.settings.save(&crate::game::Game::options_path());
+    }
     // Horizon QoL's Replay module: the recording it asked to start or stop (Horizon's own
     // `/studio record`), and how the one running goes. A replay playing isn't recorded again.
     {

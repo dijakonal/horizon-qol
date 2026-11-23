@@ -701,6 +701,71 @@ fn keybind_rows_show_the_bound_key() {
 }
 
 #[test]
+fn remap_rows_take_a_key_and_reset_to_the_game_s_own() {
+    let mut mods = all_on();
+    let mut g = gui(View::Menu);
+    options_until(
+        &mut g,
+        &mut mods,
+        Id::KeyRemap,
+        "options-key-remaps",
+        |_| true,
+    );
+    let r = frame(&mut g, SIZE, [0.0, 0.0], &mods, "options-key-remaps");
+    assert!(r.texts.iter().any(|(t, _)| t == "Debug screen"));
+    // The game's own key, before anything is remapped.
+    assert!(r.texts.iter().any(|(t, _)| t == "F3"));
+
+    // Clicking a row waits for a key; the key pressed is what now triggers the game's key.
+    let remaps = mods.iter().position(|m| m.id == Id::KeyRemap).unwrap();
+    let setting = mods[remaps]
+        .settings
+        .iter()
+        .position(|s| s.key() == "debug")
+        .unwrap();
+    let at = centre_of(
+        &g,
+        Target::Remap {
+            module: remaps,
+            setting,
+        },
+    );
+    assert!(g.mouse_pressed(at, 0, &mut mods));
+    let r = frame(
+        &mut g,
+        SIZE,
+        [0.0, 0.0],
+        &mods,
+        "options-key-remaps-waiting",
+    );
+    assert!(r.texts.iter().any(|(t, _)| t == "> Press a key <"));
+    assert!(g.key_pressed("key.keyboard.f4"));
+    assert!(!g.key_pressed("key.keyboard.t"));
+    assert_eq!(g.remap_set, [("debug", Some("key.keyboard.f4".to_owned()))]);
+
+    // A mouse button is a key too, and Escape cancels.
+    g.remap_set.clear();
+    assert!(g.mouse_pressed(at, 0, &mut mods));
+    assert!(g.mouse_pressed([0.0, 0.0], 2, &mut mods));
+    assert_eq!(
+        g.remap_set,
+        [("debug", Some("key.mouse.middle".to_owned()))]
+    );
+    g.remap_set.clear();
+    assert!(g.mouse_pressed(at, 0, &mut mods));
+    assert!(g.key_pressed("key.keyboard.escape"));
+    assert!(g.remap_set.is_empty());
+
+    // Backspace and a right-click put the game's own key back.
+    assert!(g.mouse_pressed(at, 0, &mut mods));
+    assert!(g.key_pressed("key.keyboard.backspace"));
+    assert_eq!(g.remap_set, [("debug", None)]);
+    g.remap_set.clear();
+    assert!(g.mouse_pressed(at, 1, &mut mods));
+    assert_eq!(g.remap_set, [("debug", None)]);
+}
+
+#[test]
 fn keystrokes_previews_in_every_mode() {
     let mut mods = modules::defaults();
     let ks = mods.iter().position(|m| m.id == Id::Keystrokes).unwrap();

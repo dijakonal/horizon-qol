@@ -52,6 +52,17 @@ pub enum Setting {
         mapping: &'static str,
         label: &'static str,
     },
+    /// A key of the game's own (F3's debug screen, a screenshot...), and the key the player
+    /// has remapped onto it. Shown and changed like a keybind row; `None` is the game's own key.
+    Remap {
+        /// The config file names it by this, within its module.
+        key: &'static str,
+        label: &'static str,
+        /// The key remapped onto the game's, or `None` to leave the game's key working alone.
+        value: Option<String>,
+        /// The game's own key, what the row shows and right-click puts back.
+        default: &'static str,
+    },
     /// A heading above the settings that follow.
     Heading { label: &'static str },
     /// A line of text the mod fills in as it runs (a connection's status), under `key`.
@@ -126,6 +137,15 @@ impl Setting {
         Self::Bind { mapping, label }
     }
 
+    pub const fn remap(key: &'static str, label: &'static str, default: &'static str) -> Self {
+        Self::Remap {
+            key,
+            label,
+            value: None,
+            default,
+        }
+    }
+
     pub const fn heading(label: &'static str) -> Self {
         Self::Heading { label }
     }
@@ -150,6 +170,7 @@ impl Setting {
             | Self::Slider { key, .. }
             | Self::Colour { key, .. }
             | Self::Choice { key, .. } => key,
+            Self::Remap { key, .. } => key,
             Self::Bind { .. }
             | Self::Heading { .. }
             | Self::Info { .. }
@@ -164,6 +185,7 @@ impl Setting {
             | Self::Slider { label, .. }
             | Self::Colour { label, .. }
             | Self::Choice { label, .. }
+            | Self::Remap { label, .. }
             | Self::Bind { label, .. }
             | Self::Heading { label }
             | Self::Info { label, .. }
@@ -178,6 +200,7 @@ impl Setting {
             Self::Slider { value, default, .. } => *value = *default,
             Self::Colour { value, default, .. } => *value = *default,
             Self::Choice { value, default, .. } => *value = *default,
+            Self::Remap { value, .. } => *value = None,
             _ => {}
         }
     }
@@ -204,6 +227,7 @@ impl Setting {
             Self::Slider { value, .. } => format!("{value}"),
             Self::Colour { value, .. } => format!("#{value:08X}"),
             Self::Choice { value, options, .. } => options[*value].to_lowercase().replace(' ', "_"),
+            Self::Remap { value, .. } => value.clone().unwrap_or_default(),
             _ => String::new(),
         }
     }
@@ -237,6 +261,9 @@ impl Setting {
                 {
                     *value = i;
                 }
+            }
+            Self::Remap { value, .. } => {
+                *value = (!text.is_empty()).then(|| text.to_owned());
             }
             _ => {}
         }
@@ -361,5 +388,21 @@ mod tests {
                 ("fps.x".to_owned(), "0.5".to_owned())
             ]
         );
+    }
+
+    #[test]
+    fn a_remap_round_trips_and_resets_to_the_game_s_own() {
+        let mut s = [Setting::remap("debug", "Debug screen", "key.keyboard.f3")];
+        // Nothing set: the config line is empty, and reading one back changes nothing.
+        assert_eq!(s[0].write(), "");
+        s[0].read("");
+        assert_eq!(s[0].write(), "");
+        s[0].read("key.keyboard.f4");
+        assert_eq!(s[0].write(), "key.keyboard.f4");
+        s[0].read("");
+        assert_eq!(s[0].write(), "");
+        s[0].read("key.keyboard.f4");
+        s[0].reset();
+        assert_eq!(s[0].write(), "");
     }
 }
