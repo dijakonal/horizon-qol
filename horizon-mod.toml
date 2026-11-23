@@ -166,3 +166,15 @@ helper = "src/mixins/fullbright.rs"
 bindings = [
   { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
 ]
+
+# Inventory Tab Fix: inventories keep Tab and the arrows from the keyboard focus, as a text
+# field does (the game's own `key_focus_blocked`), so Tab doesn't select the recipe book.
+[[native.mixin]]
+id = "tab_fix"
+target = "horizon_client::game::pad_menu::keys::Game<'_>::key_focus_blocked"
+kind = "RETURN"
+helper = "src/mixins/tab_fix.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "blocked", ty = "bool", value = "$value" },
+]

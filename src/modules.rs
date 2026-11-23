@@ -465,6 +465,7 @@ pub fn defaults() -> Vec<Module> {
                     Setting::toggle("durability", "Show durability", true),
                     Setting::toggle("percent", "Durability as percent", false),
                     Setting::toggle("held", "Show held item", true),
+                    Setting::choice("material", "Material", 1, &["Off", "Name", "Short"]),
                 ]),
                 "background",
                 off,

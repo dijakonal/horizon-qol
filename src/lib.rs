@@ -68,6 +68,15 @@ fn pause_button_rect(size: [f32; 2]) -> [f32; 4] {
     [6.0, size[1] - 26.0, 96.0, 20.0]
 }
 
+/// Inventory Tab Fix is on: the game-side code keeps Tab (and the arrows) from moving the focus
+/// in inventories.
+static TAB_FIX: AtomicBool = AtomicBool::new(false);
+
+/// For the game: whether inventories keep their navigation keys from the focus.
+pub fn tab_fix() -> bool {
+    TAB_FIX.load(Ordering::Relaxed)
+}
+
 /// The Fullbright module is on: the game-side code keeps the renderer's full-light lightmap on.
 static FULLBRIGHT: AtomicBool = AtomicBool::new(false);
 
@@ -627,7 +636,12 @@ fn read_player(host: &dyn ClientHost, state: &mut State) {
                 .max_damage(stack.item())
                 .filter(|max| *max > 0)
                 .map(|max| (max.saturating_sub(stack.damage()), max));
-            hud::Worn { stack, durability }
+            let id = stack.item().id(host);
+            hud::Worn {
+                stack,
+                id,
+                durability,
+            }
         })
     };
     data.armor = [
@@ -1508,6 +1522,7 @@ impl Hooks for HorizonQol {
             save_config(host, state);
         }
         FULLBRIGHT.store(state.on(Id::Fullbright), Ordering::Relaxed);
+        TAB_FIX.store(state.on(Id::TabFix), Ordering::Relaxed);
         freecam_tick(host, state, freecam_key);
         replay_tick(host, state, record_key);
         let toggles = state.module(Id::ToggleSprint);
@@ -2077,15 +2092,6 @@ impl Hooks for HorizonQol {
         host: &dyn ClientHost,
         event: &mut ScreenKeyPressedPreEvent<'_>,
     ) -> Flow {
-        // In an inventory or a container, Tab moves the keyboard's focus to the recipe book
-        // (vanilla's Tab navigation): with Inventory Tab Fix on, the screen doesn't take it. The
-        // key still reaches the key mappings bound to it, which the game hands it separately.
-        if event.key == "key.keyboard.tab"
-            && (CONTAINER_SCREENS.contains(&event.screen.id) || event.screen.menu.is_some())
-            && self.state().as_ref().is_some_and(|s| s.on(Id::TabFix))
-        {
-            return Flow::Cancel;
-        }
         if host.mod_screen() != Some(ID) {
             return Flow::Continue;
         }

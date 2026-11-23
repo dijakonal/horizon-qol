@@ -23,6 +23,8 @@ pub const MARGIN: f32 = 2.0;
 #[derive(Clone, Debug)]
 pub struct Worn {
     pub stack: ItemStack,
+    /// The item's id (`minecraft:diamond_chestplate`), for its material.
+    pub id: String,
     /// Durability left and the most it has; None for an item that doesn't wear.
     pub durability: Option<(u32, u32)>,
 }
@@ -341,11 +343,16 @@ pub fn content(m: &Module, data: &HudData) -> Option<Content> {
             }])
         }
         Id::Armor => {
-            let mut rows: Vec<ArmorRow> = data
+            let rows: Vec<ArmorRow> = data
                 .armor
                 .iter()
                 .chain(data.held.iter().filter(|_| m.bool("held")))
                 .map(|w| {
+                    let material = match m.choice("material") {
+                        1 => material(&w.id).map(|(name, _)| name),
+                        2 => material(&w.id).map(|(_, short)| short),
+                        _ => None,
+                    };
                     let (text, colour) = match w.durability {
                         Some((left, max)) if m.bool("durability") => (
                             if m.bool("percent") {
@@ -358,6 +365,16 @@ pub fn content(m: &Module, data: &HudData) -> Option<Content> {
                         _ if w.stack.count() > 1 => (w.stack.count().to_string(), 0xFFFFFFFF),
                         _ => (String::new(), 0xFFFFFFFF),
                     };
+                    let text = if m.bool("durability") {
+                        text
+                    } else {
+                        String::new()
+                    };
+                    let text = match (material, text.is_empty()) {
+                        (Some(mat), true) => mat.to_owned(),
+                        (Some(mat), false) => format!("{mat} {text}"),
+                        (None, _) => text,
+                    };
                     ArmorRow {
                         stack: Some(w.stack.clone()),
                         text,
@@ -367,9 +384,6 @@ pub fn content(m: &Module, data: &HudData) -> Option<Content> {
                 .collect();
             if rows.is_empty() {
                 return None;
-            }
-            if !m.bool("durability") {
-                rows.iter_mut().for_each(|r| r.text.clear());
             }
             Some(Content::Armor {
                 rows,
@@ -444,6 +458,43 @@ fn rec_text(m: &Module, ms: u64) -> String {
     }
 }
 
+/// The material of armor (or a tool) by its item id: its name and a short form. None for an item
+/// that isn't made of one (an elytra, a carved pumpkin, a block).
+pub fn material(id: &str) -> Option<(&'static str, &'static str)> {
+    let name = id.rsplit(':').next().unwrap_or(id);
+    const MATERIALS: [(&str, &str, &str); 9] = [
+        ("netherite_", "Netherite", "Neth"),
+        ("diamond_", "Diamond", "Dia"),
+        ("iron_", "Iron", "Iron"),
+        ("golden_", "Gold", "Gold"),
+        ("chainmail_", "Chainmail", "Chain"),
+        ("copper_", "Copper", "Cop"),
+        ("leather_", "Leather", "Lthr"),
+        ("turtle_", "Turtle", "Turt"),
+        ("wooden_", "Wood", "Wood"),
+    ];
+    let piece = [
+        "_helmet",
+        "_chestplate",
+        "_leggings",
+        "_boots",
+        "_sword",
+        "_axe",
+        "_pickaxe",
+        "_shovel",
+        "_hoe",
+        "_spear",
+    ];
+    if !piece.iter().any(|p| name.ends_with(p)) && name != "turtle_helmet" {
+        return None;
+    }
+    MATERIALS
+        .iter()
+        .find(|(prefix, _, _)| name.starts_with(prefix))
+        .map(|(_, full, short)| (*full, *short))
+        .or_else(|| name.starts_with("stone_").then_some(("Stone", "Stone")))
+}
+
 /// The stand-in an element shows in the editor when it has nothing to show in game (no armor).
 pub fn editor_content(m: &Module, data: &HudData) -> Option<Content> {
     if let Some(c) = content(m, data) {
@@ -503,14 +554,22 @@ pub fn editor_content(m: &Module, data: &HudData) -> Option<Content> {
         }),
         Id::Armor => Some(Content::Armor {
             rows: (0..4)
-                .map(|_| ArmorRow {
-                    stack: None,
-                    text: if m.bool("durability") {
-                        if m.bool("percent") { "100%" } else { "363" }.into()
+                .map(|_| {
+                    let durability = if m.bool("durability") {
+                        if m.bool("percent") { "100%" } else { "363" }
                     } else {
-                        String::new()
-                    },
-                    colour: 0xFF55FF55,
+                        ""
+                    };
+                    let mat = match m.choice("material") {
+                        1 => "Diamond ",
+                        2 => "Dia ",
+                        _ => "",
+                    };
+                    ArmorRow {
+                        stack: None,
+                        text: format!("{mat}{durability}").trim().to_owned(),
+                        colour: 0xFF55FF55,
+                    }
                 })
                 .collect(),
             horizontal: m.choice("layout") == 1,
@@ -1316,5 +1375,15 @@ mod tests {
 
     fn set(m: &mut Module, key: &str, f: impl Fn(&mut crate::settings::Setting)) {
         f(m.settings.iter_mut().find(|s| s.key() == key).unwrap());
+    }
+
+    #[test]
+    fn armor_materials_read_from_ids() {
+        assert_eq!(material("minecraft:diamond_chestplate"), Some(("Diamond", "Dia")));
+        assert_eq!(material("minecraft:golden_boots"), Some(("Gold", "Gold")));
+        assert_eq!(material("minecraft:turtle_helmet"), Some(("Turtle", "Turt")));
+        assert_eq!(material("minecraft:netherite_sword"), Some(("Netherite", "Neth")));
+        assert_eq!(material("minecraft:elytra"), None);
+        assert_eq!(material("minecraft:iron_block"), None);
     }
 }

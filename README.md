@@ -62,7 +62,7 @@ cancels, Backspace leaves it unbound, a right-click puts back the default).
 | Keystrokes | The keys you press, in three modes (below) | Mode, key size, key gap, pressed colour, fade-out, and each mode's options |
 | Coordinates | X, Y, Z, the way you face, the dimension | Lines or one line, direction, dimension, decimals |
 | Speed | How fast you move | Vertical speed, m/s or km/h |
-| Armor Status | Your armor and held item with durability | Vertical or horizontal, durability, as percent, held item |
+| Armor Status | Your armor and held item with durability and material | Vertical or horizontal, durability, as percent, held item, material (name or short) |
 | Potion Effects | Active effects with level and time left | Level, time left |
 | Clock | Real-world time | 24-hour, seconds, time zone (UTC offset) |
 | Toggle Sprint & Sneak | Its keys switch sprinting and sneaking on and off | Each on or off, their keys, status on the HUD, keep sprinting after a restart |
