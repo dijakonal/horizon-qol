@@ -50,6 +50,7 @@ pub enum Id {
     Wardrobe,
     Fullbright,
     TabFix,
+    PlayerHeads,
     /// Remaps the game's own keys from the mod's menu: F3's debug screen and friends, which
     /// its Controls list keeps down a long page.
     KeyRemap,
@@ -84,6 +85,7 @@ impl Id {
             Id::Wardrobe => "wardrobe",
             Id::Fullbright => "fullbright",
             Id::TabFix => "tab_fix",
+            Id::PlayerHeads => "player_heads",
             Id::KeyRemap => "key_remap",
             Id::ToggleSprint => "toggle_sprint",
             Id::Zoom => "zoom",
@@ -571,6 +573,20 @@ pub fn defaults() -> Vec<Module> {
                     "freecam_note",
                     "Space and Shift go up and down, Sprint doubles the speed",
                 ),
+            ],
+        ),
+        Module::new(
+            Id::PlayerHeads,
+            "Player Heads",
+            "Players' faces beside their chat messages, and on the locator bar in place of their \
+             dots.",
+            Utility,
+            0xFFD9A066,
+            true,
+            None,
+            vec![
+                Setting::toggle("chat", "In the chat", true),
+                Setting::toggle("locator", "On the locator bar", true),
             ],
         ),
         Module::new(

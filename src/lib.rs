@@ -80,6 +80,20 @@ pub fn tab_fix() -> bool {
     TAB_FIX.load(Ordering::Relaxed)
 }
 
+/// Player Heads: faces in the chat and on the locator bar, for the game-side code.
+static CHAT_HEADS: AtomicBool = AtomicBool::new(false);
+static LOCATOR_HEADS: AtomicBool = AtomicBool::new(false);
+
+/// For the game: players' faces beside their chat messages.
+pub fn chat_heads() -> bool {
+    CHAT_HEADS.load(Ordering::Relaxed)
+}
+
+/// For the game: players' faces on the locator bar.
+pub fn locator_heads() -> bool {
+    LOCATOR_HEADS.load(Ordering::Relaxed)
+}
+
 /// The Fullbright module is on: the game-side code keeps the renderer's full-light lightmap on.
 static FULLBRIGHT: AtomicBool = AtomicBool::new(false);
 
@@ -1542,6 +1556,9 @@ impl Hooks for HorizonQol {
         }
         FULLBRIGHT.store(state.on(Id::Fullbright), Ordering::Relaxed);
         TAB_FIX.store(state.on(Id::TabFix), Ordering::Relaxed);
+        let heads = state.module(Id::PlayerHeads);
+        CHAT_HEADS.store(heads.enabled && heads.bool("chat"), Ordering::Relaxed);
+        LOCATOR_HEADS.store(heads.enabled && heads.bool("locator"), Ordering::Relaxed);
         freecam_tick(host, state, freecam_key);
         replay_tick(host, state, record_key);
         let toggles = state.module(Id::ToggleSprint);
