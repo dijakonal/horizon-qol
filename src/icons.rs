@@ -408,6 +408,20 @@ pub fn bitmap(icon: Icon) -> &'static [&'static str] {
             ".......###..",
             "........###.",
         ],
+        // One key remapped onto another: a keycap, the change arrow, the key that takes over.
+        Icon::Module(Id::KeyRemap) => &[
+            "............",
+            "..########..",
+            "..#......#..",
+            "..#..##..#..",
+            "..########..",
+            ".....+......",
+            "....+++.....",
+            "..########..",
+            "..#......#..",
+            "..#..++..#..",
+            "..########..",
+        ],
         Icon::Gear => &[
             "..#.#..", //
             ".#####.", //

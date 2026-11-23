@@ -9,6 +9,7 @@
 mod freecam;
 mod hud;
 mod icons;
+mod key_remap;
 mod modules;
 mod previews;
 mod profiles;
@@ -24,6 +25,8 @@ mod ui;
 pub mod voice;
 /// The skin manager's shared state, public for its game-side code (`src/mixins/wardrobe.rs`).
 pub mod wardrobe;
+/// The Key Remaps module's queue, for its game-side tick (`src/voice/mixins/tick.rs`).
+pub use key_remap::take_remaps;
 
 use mod_api::text::TextContent;
 use mod_api::{
@@ -162,6 +165,9 @@ struct State {
     active_profile: Option<String>,
     /// The saved profiles: name and file name, by name.
     profiles: Vec<(String, String)>,
+    /// The Key Remaps module's switch as the game-side last saw it, so going over queues its
+    /// remaps or the game's defaults.
+    key_remaps_on: Option<bool>,
 }
 
 impl State {
@@ -203,6 +209,7 @@ impl HorizonQol {
             sneak_toggled: false,
             active_profile: None,
             profiles: Vec::new(),
+            key_remaps_on: None,
             freecam: None,
             camera_before: None,
             replay_session: None,
@@ -456,6 +463,8 @@ fn write_profile(host: &dyn ClientHost, file: &str, text: &str) -> bool {
 /// queued for the game to bind.
 fn use_profile(state: &mut State, text: &str) {
     profiles::apply(&mut state.modules, text);
+    // The Key Remaps module's rows as the profile has them, bound as a switch over would.
+    key_remap::queue_all(&state.modules);
     if let Some(parsed) = profiles::parse(text) {
         let mut queue = REBINDS.lock().unwrap_or_else(|e| e.into_inner());
         for (mapping, key) in parsed.keys {
@@ -1441,6 +1450,16 @@ impl Hooks for HorizonQol {
         if !state.loaded {
             state.loaded = true;
             load_config(host, state);
+            // The game keeps the remaps in its own options, so they are already bound; the
+            // module's switch only moves from here.
+            state.key_remaps_on = Some(state.on(Id::KeyRemap));
+        }
+        // The Key Remaps module's switch going over: on, its remaps again; off, the game's
+        // defaults back.
+        let remaps_on = state.on(Id::KeyRemap);
+        if state.key_remaps_on != Some(remaps_on) {
+            state.key_remaps_on = Some(remaps_on);
+            key_remap::queue_all(&state.modules);
         }
         read_player(host, state);
         skin_manager::tick(host, state);
@@ -1933,6 +1952,31 @@ impl Hooks for HorizonQol {
             if let Some(gui) = state.gui.as_mut() {
                 gui.note = Some(note);
             }
+        }
+        // The Key Remaps page's rows: the setting holds the key this menu set, and the
+        // game-side tick binds it as Controls does. With the module off, the key is kept
+        // for when it goes back on, and nothing is bound now.
+        if state.gui.as_ref().is_some_and(|g| !g.remap_set.is_empty()) {
+            let asked: Vec<(&'static str, Option<String>)> = state
+                .gui
+                .as_mut()
+                .map(|g| std::mem::take(&mut g.remap_set))
+                .unwrap_or_default();
+            let module_on = state.on(Id::KeyRemap);
+            for (key, to) in asked {
+                if let Some(setting) = state
+                    .modules
+                    .iter_mut()
+                    .find(|m| m.id == Id::KeyRemap)
+                    .and_then(|m| m.settings.iter_mut().find(|s| s.key() == key))
+                {
+                    setting.read(to.as_deref().unwrap_or(""));
+                }
+                if module_on {
+                    key_remap::queue(key_remap::mapping_for(key), to);
+                }
+            }
+            save_config(host, state);
         }
         let gui = state.gui.get_or_insert_with(new_gui);
         gui.shift = shift(host);

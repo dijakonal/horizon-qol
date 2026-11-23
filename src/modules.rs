@@ -50,6 +50,9 @@ pub enum Id {
     Wardrobe,
     Fullbright,
     TabFix,
+    /// Remaps the game's own keys from the mod's menu: F3's debug screen and friends, which
+    /// its Controls list keeps down a long page.
+    KeyRemap,
     /// Toggle Sprint & Sneak (its key is Toggle Sprint's, from before the two were one).
     ToggleSprint,
     Zoom,
@@ -81,6 +84,7 @@ impl Id {
             Id::Wardrobe => "wardrobe",
             Id::Fullbright => "fullbright",
             Id::TabFix => "tab_fix",
+            Id::KeyRemap => "key_remap",
             Id::ToggleSprint => "toggle_sprint",
             Id::Zoom => "zoom",
             Id::ShulkerPreview => "shulker_preview",
@@ -107,6 +111,16 @@ pub const MAP_SNEAK: &str = "toggle_sneak";
 pub const MAP_FREECAM: &str = "freecam";
 pub const MAP_RECORD: &str = "record";
 pub const MAP_FULLBRIGHT: &str = "fullbright";
+
+/// The game's own keys the Key Remaps module can remap: the setting key each one is kept
+/// under (the config file's, within the module) and the game mapping it is (`key_remap.rs`
+/// turns one into the other).
+pub const REMAP_DEBUG: &str = "debug";
+pub const REMAP_DEBUG_MODIFIER: &str = "debug_modifier";
+pub const REMAP_HIDE_HUD: &str = "hide_hud";
+pub const REMAP_SCREENSHOT: &str = "screenshot";
+pub const REMAP_PERSPECTIVE: &str = "perspective";
+pub const REMAP_FULLSCREEN: &str = "fullscreen";
 
 /// Where a HUD element sits: its top left as a fraction of the screen, so it keeps its place when
 /// the window or the GUI scale changes. Its size comes from its content times its scale setting.
@@ -671,6 +685,35 @@ pub fn defaults() -> Vec<Module> {
             true,
             None,
             vec![],
+        ),
+        Module::new(
+            Id::KeyRemap,
+            "Key Remaps",
+            "The game's own keys, which its Controls list buries in a long page: the debug \
+             screen (F3) and the rest. Click a row and press the new key; it is kept in the \
+             game's options and shows in Controls too.",
+            Utility,
+            0xFF38BDF8,
+            true,
+            None,
+            vec![
+                Setting::heading("Game keys"),
+                Setting::remap(REMAP_DEBUG, "Debug screen", "key.keyboard.f3"),
+                Setting::remap(
+                    REMAP_DEBUG_MODIFIER,
+                    "Debug combos (F3 + a key)",
+                    "key.keyboard.f3",
+                ),
+                Setting::remap(REMAP_HIDE_HUD, "Hide the HUD", "key.keyboard.f1"),
+                Setting::remap(REMAP_SCREENSHOT, "Screenshot", "key.keyboard.f2"),
+                Setting::remap(REMAP_PERSPECTIVE, "Perspective", "key.keyboard.f5"),
+                Setting::remap(REMAP_FULLSCREEN, "Fullscreen", "key.keyboard.f11"),
+                Setting::info(
+                    "key_remap_note",
+                    "The screen's row and the combos' row are separate: move the screen and \
+                     F3+H and friends still work, or move both and nothing is left on F3",
+                ),
+            ],
         ),
         Module::new(
             Id::EnderPreview,

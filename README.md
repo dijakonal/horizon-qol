@@ -47,6 +47,28 @@ cancels, Backspace leaves it unbound, a right-click puts back the default).
 | Mute Microphone | J | Mutes or unmutes your microphone |
 | Voice Chat Off / On | K | Turns voice chat off or on for the moment |
 
+### Key Remaps
+
+The **Key Remaps** module (Utility tab) rebinds the game's own keys — the ones its Controls
+page keeps at the bottom of a long list — from the mod's menu, the same click-then-press way:
+
+| Game key | Default | Row |
+| --- | --- | --- |
+| Debug screen | F3 | Debug screen |
+| Debug combos (the F3 of F3+H and friends) | F3 | Debug combos |
+| Hide the HUD | F1 | Hide the HUD |
+| Screenshot | F2 | Screenshot |
+| Perspective | F5 | Perspective |
+| Fullscreen | F11 | Fullscreen |
+
+The debug screen's row and the combos' row are separate: move the screen and F3+H and friends
+still work, or move both and nothing is left on F3. A remap is the game's own binding, so it
+is kept in the game's `options.txt` and shows in *Options > Controls* too. The module's switch
+applies its rows again or puts the game's defaults back, and a profile load does the same for
+the profile's rows.
+
+![The Key Remaps page](docs/key-remaps.png)
+
 ![Resizing an element by its corner](docs/resize.png)
 
 ![The mod menu](docs/menu.png)
@@ -77,6 +99,7 @@ cancels, Backspace leaves it unbound, a right-click puts back the default).
 | Voice Chat | Proximity voice chat on servers that run Simple Voice Chat | Talk mode, levels, mute, sounds, keys, its pages |
 | Voice Status, Voice Group, Voice Speakers | Voice chat's HUD | Icon or icon and text (status), scale, background, most players, names |
 | Inventory Tab Fix | Tab doesn't select the recipe book (or another button) in inventories and containers, so a key on Tab works there | On or off |
+| Key Remaps | The game's own keys, rebindable from the mod's menu instead of the long Controls page: the debug screen (F3) and the rest | Each key's row |
 | Shulker Preview | A shulker box's tooltip shows its items as a grid of slots instead of the game's list, in the box's colour | Always or hold Shift, coloured tooltip, hide the game's list, Shift hint |
 | Ender Chest Preview | An ender chest's tooltip shows your ender chest as it was when you last opened one | Always or hold Shift, when it was last seen, Shift hint |
 
@@ -319,6 +342,7 @@ src/wardrobe.rs           the skin manager's shared state (with its game side), 
 src/skin_manager.rs       the skin manager: imported files, picks, importing, what its page shows
 src/ui/wardrobe.rs        the skin manager's page
 src/replay.rs             Replay: recordings the mod asks for and how they go, shared with the game-side tick
+src/key_remap.rs          the Key Remaps module's queue of game keys, shared with the game-side tick
 src/freecam.rs            Freecam's camera: turning, flying, and where each frame is drawn from
 icon.png                  the logo, drawn from LOGO_ART in src/icons.rs by tools/logo.py
 src/ui/tests.rs           the screen's tests, with a fake draw context that can write SVG previews

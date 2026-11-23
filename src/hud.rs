@@ -420,6 +420,7 @@ pub fn content(m: &Module, data: &HudData) -> Option<Content> {
         // The game draws the scoreboard (the scores are its): see `scoreboard::place`.
         Id::Scoreboard
         | Id::TabFix
+        | Id::KeyRemap
         | Id::Fullbright
         | Id::Wardrobe
         | Id::Replay

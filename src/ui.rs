@@ -59,6 +59,15 @@ const SEARCH_MAX: usize = 24;
 const SNAP: f32 = 4.0;
 const SCALE_STEP: f32 = 0.1;
 
+/// The key row waiting for a key press: a Controls mapping's, or a game key remap's.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Capture {
+    /// A keybind setting's mapping id.
+    Bind(&'static str),
+    /// A remap setting's key, within its module.
+    Remap(&'static str),
+}
+
 /// Something the player can click.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Target {
@@ -112,6 +121,11 @@ enum Target {
     },
     /// The key row of keybind setting `setting`: click, then press the new key.
     Bind {
+        module: usize,
+        setting: usize,
+    },
+    /// The key row of remap setting `setting`: click, then press the new key.
+    Remap {
         module: usize,
         setting: usize,
     },
@@ -222,10 +236,13 @@ pub struct Gui {
     /// An `Action` button was pressed: its id, for the mod to act on.
     pub action: Option<&'static str>,
     /// The mapping whose key row waits for a key press.
-    pub capture: Option<&'static str>,
+    pub capture: Option<Capture>,
     /// Keys chosen here, for the mod to bind: a mapping and its new key, or None for its
     /// default.
     pub rebind: Vec<(&'static str, Option<String>)>,
+    /// Remaps chosen here, for the mod to apply: a remap's key and the key remapped onto it,
+    /// or None to put the game's own key back.
+    pub remap_set: Vec<(&'static str, Option<String>)>,
     /// The saved profiles' names, filled in by the mod, and the one in use.
     pub profiles: Vec<String>,
     pub active_profile: Option<String>,
@@ -275,6 +292,7 @@ impl Gui {
             action: None,
             capture: None,
             rebind: Vec::new(),
+            remap_set: Vec::new(),
             profiles: Vec::new(),
             active_profile: None,
             profiles_wanted: false,
@@ -1279,7 +1297,7 @@ impl Gui {
                     }
                 }
                 Setting::Bind { mapping, .. } => {
-                    let waiting = self.capture == Some(*mapping);
+                    let waiting = self.capture == Some(Capture::Bind(mapping));
                     let key = if waiting {
                         "> Press a key <".to_owned()
                     } else {
@@ -1324,6 +1342,60 @@ impl Gui {
                     self.hit(row, t);
                     let hint = if waiting {
                         "Esc cancels, Backspace unbinds"
+                    } else {
+                        "Click to change, right-click to reset"
+                    };
+                    let hw = p.width(hint);
+                    let label_end = row[0] + 8.0 + p.width(setting.label()) + 8.0;
+                    if chip[0] - 8.0 - hw > label_end {
+                        p.text(hint, [chip[0] - 8.0 - hw, label_y], theme::TEXT_FAINT);
+                    }
+                }
+                Setting::Remap {
+                    key,
+                    value,
+                    default,
+                    ..
+                } => {
+                    let waiting = self.capture == Some(Capture::Remap(key));
+                    let key = if waiting {
+                        "> Press a key <".to_owned()
+                    } else {
+                        key_label(value.as_deref().unwrap_or(default))
+                    };
+                    let kw = (p.width(&key) + 12.0).max(60.0);
+                    let chip = [row[0] + row[2] - 6.0 - kw, row[1] + 4.0, kw, ROW_H - 8.0];
+                    let t = Target::Remap {
+                        module: i,
+                        setting: s,
+                    };
+                    p.rounded(
+                        chip,
+                        if waiting || hover(t) {
+                            theme::ACCENT
+                        } else {
+                            theme::BORDER
+                        },
+                    );
+                    p.rounded(
+                        [chip[0] + 1.0, chip[1] + 1.0, chip[2] - 2.0, chip[3] - 2.0],
+                        theme::SEARCH,
+                    );
+                    let changed = value.is_some();
+                    p.text_centred(
+                        &key,
+                        chip[0],
+                        chip[2],
+                        chip[1] + 3.0,
+                        if waiting || changed {
+                            theme::ACCENT_HOVER
+                        } else {
+                            theme::TEXT_DIM
+                        },
+                    );
+                    self.hit(row, t);
+                    let hint = if waiting {
+                        "Esc cancels, Backspace resets"
                     } else {
                         "Click to change, right-click to reset"
                     };
@@ -1432,17 +1504,28 @@ impl Gui {
 
     /// A press of mouse `button` at `at`: true when the screen took it.
     pub fn mouse_pressed(&mut self, at: [f32; 2], button: i32, modules: &mut [Module]) -> bool {
-        // Waiting for a key: the middle and side buttons are keys too; the others cancel.
-        if let Some(mapping) = self.capture.take() {
-            let key = match button {
-                2 => Some("key.mouse.middle".to_owned()),
-                3..=7 => Some(format!("key.mouse.{}", button + 1)),
-                _ => None,
-            };
-            if let Some(key) = key {
-                self.set_bind(mapping, Some(key));
+        // The key a mouse button gives a waiting key row: the middle and side buttons are
+        // keys too; the others cancel.
+        let mouse_key = |button: i32| match button {
+            2 => Some("key.mouse.middle".to_owned()),
+            3..=7 => Some(format!("key.mouse.{}", button + 1)),
+            _ => None,
+        };
+        // Waiting for a key: the press binds or cancels, and never reaches anything else.
+        match self.capture.take() {
+            Some(Capture::Bind(mapping)) => {
+                if let Some(key) = mouse_key(button) {
+                    self.set_bind(mapping, Some(key));
+                }
+                return true;
             }
-            return true;
+            Some(Capture::Remap(remap)) => {
+                if let Some(key) = mouse_key(button) {
+                    self.set_remap(remap, Some(key));
+                }
+                return true;
+            }
+            None => {}
         }
         let Some((_, r, target)) = self.target_at(at) else {
             return false;
@@ -1451,8 +1534,18 @@ impl Gui {
             && let Setting::Bind { mapping, .. } = modules[module].settings[setting]
         {
             match button {
-                0 => self.capture = Some(mapping),
+                0 => self.capture = Some(Capture::Bind(mapping)),
                 1 => self.set_bind(mapping, None),
+                _ => return false,
+            }
+            return true;
+        }
+        if let Target::Remap { module, setting } = target
+            && let Setting::Remap { key, .. } = modules[module].settings[setting]
+        {
+            match button {
+                0 => self.capture = Some(Capture::Remap(key)),
+                1 => self.set_remap(key, None),
                 _ => return false,
             }
             return true;
@@ -1520,11 +1613,12 @@ impl Gui {
                 }
                 Setting::Colour { .. }
                 | Setting::Bind { .. }
+                | Setting::Remap { .. }
                 | Setting::Heading { .. }
                 | Setting::Info { .. }
                 | Setting::Meter { .. }
-                | Setting::Action { .. } => {}
-                Setting::Choice { .. } => {}
+                | Setting::Action { .. }
+                | Setting::Choice { .. } => {}
             },
             Target::Action { module, setting } => {
                 if let Setting::Action { id, .. } = modules[module].settings[setting] {
@@ -1553,6 +1647,13 @@ impl Gui {
             }
             Target::ResetModule(i) => {
                 modules[i].reset();
+                // The Key Remaps module's rows back to the game's defaults, bound like the
+                // rows' own changes are.
+                for setting in &modules[i].settings {
+                    if let Setting::Remap { key, .. } = setting {
+                        self.remap_set.push((key, None));
+                    }
+                }
                 self.dirty = true;
             }
             Target::EditHud => {
@@ -1602,6 +1703,7 @@ impl Gui {
                 });
             }
             Target::Bind { .. } => {}
+            Target::Remap { .. } => {}
             Target::Profiles => {
                 self.page = Page::Profiles;
                 self.scroll = 0.0;
@@ -1652,18 +1754,32 @@ impl Gui {
         self.rebind.push((mapping, key));
     }
 
+    /// Remaps game key `remap` onto `key` (None: the game's own key back) for the mod to
+    /// apply; the row shows it once the mod has set the setting.
+    fn set_remap(&mut self, remap: &'static str, key: Option<String>) {
+        self.remap_set.push((remap, key));
+    }
+
     /// A key press while the screen is open: true when it chose a key for the row waiting
-    /// for one. Escape cancels; Backspace and Delete leave the mapping unbound.
+    /// for one. Escape cancels; Backspace and Delete leave a mapping unbound, and put a
+    /// remap's game key back.
     pub fn key_pressed(&mut self, key: &str) -> bool {
-        let Some(mapping) = self.capture.take() else {
+        let Some(capture) = self.capture.take() else {
             return false;
         };
-        match key {
-            "key.keyboard.escape" => {}
-            "key.keyboard.backspace" | "key.keyboard.delete" => {
-                self.set_bind(mapping, Some(UNBOUND.to_owned()))
-            }
-            key => self.set_bind(mapping, Some(key.to_owned())),
+        match capture {
+            Capture::Bind(mapping) => match key {
+                "key.keyboard.escape" => {}
+                "key.keyboard.backspace" | "key.keyboard.delete" => {
+                    self.set_bind(mapping, Some(UNBOUND.to_owned()))
+                }
+                key => self.set_bind(mapping, Some(key.to_owned())),
+            },
+            Capture::Remap(remap) => match key {
+                "key.keyboard.escape" | "key.keyboard.unknown" => {}
+                "key.keyboard.backspace" | "key.keyboard.delete" => self.set_remap(remap, None),
+                key => self.set_remap(remap, Some(key.to_owned())),
+            },
         }
         true
     }
