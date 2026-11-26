@@ -212,3 +212,44 @@ bindings = [
   { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
   { name = "blocked", ty = "bool", value = "$value" },
 ]
+
+# Player Heads: faces in the chat (room made before it draws, faces drawn after) and on the
+# locator bar (its dots, as the game lays them out, become faces).
+[[native.mixin]]
+id = "chat_heads_room"
+target = "horizon_client::game::chat::Game<'_>::draw_chat"
+kind = "MODIFY_VARIABLE"
+variable = { name = "offset", ordinal = 0, at = "LOAD" }
+require = 1
+helper = "src/mixins/chat_heads_room.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "offset", ty = "[f32; 2]", value = "$value" },
+]
+
+[[native.mixin]]
+id = "chat_heads_draw"
+target = "horizon_client::game::chat::Game<'_>::draw_chat"
+kind = "AFTER_CALL"
+selector = "self.ui.chat.draw_at"
+require = 1
+ordinal = 0
+result = "()"
+helper = "src/mixins/chat_heads_draw.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "batch", ty = "&mut horizon_client::hud::HudBatch", value = "&mut *batch" },
+  { name = "now", ty = "f32", value = "$local:now:0" },
+  { name = "focused", ty = "bool", value = "$local:focused:0" },
+  { name = "offset", ty = "[f32; 2]", value = "$local:offset:0" },
+]
+
+[[native.mixin]]
+id = "locator_heads"
+target = "horizon_client::game::locator_bar::Game<'_>::locator_bar_draws"
+kind = "RETURN"
+helper = "src/mixins/locator_heads.rs"
+bindings = [
+  { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
+  { name = "draws", ty = "Vec<horizon_client::hud_layout::GuiDraw>", value = "$value" },
+]

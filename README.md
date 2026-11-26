@@ -38,6 +38,7 @@ cancels, Backspace leaves it unbound, a right-click puts back the default).
 | Open Mod Menu | Right Shift | Opens the HUD editor |
 | Zoom | C | Zooms while held, or on and off in Toggle mode |
 | Freecam | F6 | Freecam on or off |
+| Player Heads | Players' faces beside their chat messages, and on the locator bar in place of their dots | In the chat, on the locator bar |
 | Fullbright | not bound | Fullbright on or off |
 | Start / Stop Recording | F7 | Starts a recording for Replay Studio, or stops and saves it |
 | Toggle Sprint | Y | Sprinting on or off, while Toggle Sprint & Sneak is on |
