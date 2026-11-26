@@ -1,0 +1,1 @@
+{"format":1,"id":"qol_stardust","slot":"trail","texture":{"png":"iVBORw0KGgoAAAANSUhEUgAAACAAAAAICAYAAACYhf2vAAAAQUlEQVR42mNgGErg1wmb/9Q2kwmZ8//ZtP+ELMfliP8novA67kOFBnGOJ8YR5AKCjsBnObWigOiQoARQLTpGBAAAEbEp3kop70YAAAAASUVORK5CYII="},"parts":[],"trail":{"sprites":4,"rate":2,"lifetime":30,"size":[1.5,3],"gravity":-0.01,"drift":1.5,"spin":8,"from":"feet","fade":true,"glow":true}}

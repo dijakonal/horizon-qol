@@ -53,6 +53,8 @@ pub enum Id {
     /// Remaps the game's own keys from the mod's menu: F3's debug screen and friends, which
     /// its Controls list keeps down a long page.
     KeyRemap,
+    /// The free cosmetics: the catalog, its menu page and what the player wears.
+    Cosmetics,
     /// Toggle Sprint & Sneak (its key is Toggle Sprint's, from before the two were one).
     ToggleSprint,
     Zoom,
@@ -85,6 +87,7 @@ impl Id {
             Id::Fullbright => "fullbright",
             Id::TabFix => "tab_fix",
             Id::KeyRemap => "key_remap",
+            Id::Cosmetics => "cosmetics",
             Id::ToggleSprint => "toggle_sprint",
             Id::Zoom => "zoom",
             Id::ShulkerPreview => "shulker_preview",
@@ -713,6 +716,23 @@ pub fn defaults() -> Vec<Module> {
                     "key_remap_note",
                     "The screen's row and the combos' row are separate: move the screen and \
                      F3+H and friends still work, or move both and nothing is left on F3",
+                ),
+            ],
+        ),
+        Module::new(
+            Id::Cosmetics,
+            "Cosmetics",
+            "Hats, ears, wings and more, made by the mod and all free: click one to wear it, \
+             click it again to take it off. Only you see them for now.",
+            Utility,
+            0xFFF472B6,
+            true,
+            None,
+            vec![
+                Setting::action("cosmetics", "Cosmetic menu", "Open"),
+                Setting::info(
+                    "cosmetics_note",
+                    "The switch wears or clears everything this menu set",
                 ),
             ],
         ),

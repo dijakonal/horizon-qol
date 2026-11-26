@@ -167,6 +167,40 @@ bindings = [
   { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
 ]
 
+# The Cosmetics module: what its player wears, parsed with the game's item reader (the
+# support module beside the game's cosmetics) and put on the player's own model in place of
+# the service's answer. Everyone else wears what the service says.
+[[native.module]]
+id = "cosmetics_module"
+file = "crates/horizon-client/src/game/interface/cosmetics/mod.rs"
+name = "qol_cosmetics"
+source = "src/mixins/cosmetics_module.rs"
+
+[[native.mixin]]
+id = "cosmetics"
+target = "horizon_client::game::cosmetics::Seat::player_layers"
+kind = "MODIFY_VARIABLE"
+variable = { name = "worn", ordinal = 0, at = "STORE", parameter = false }
+require = 1
+helper = "src/mixins/cosmetics.rs"
+bindings = [
+  { name = "value", ty = "Option<horizon_cosmetics::Worn>", value = "$value" },
+  { name = "m", ty = "&PlayerModel", value = "m" },
+]
+
+# The same worn list by the name tag: its style's badge, and how tall the items stand.
+[[native.mixin]]
+id = "cosmetics_tag"
+target = "horizon_client::game::cosmetics::Seat::name_decoration"
+kind = "MODIFY_VARIABLE"
+variable = { name = "worn", ordinal = 0, at = "STORE", parameter = false }
+require = 1
+helper = "src/mixins/cosmetics_tag.rs"
+bindings = [
+  { name = "value", ty = "Option<horizon_cosmetics::Worn>", value = "$value" },
+  { name = "m", ty = "&PlayerModel", value = "m" },
+]
+
 # Inventory Tab Fix: inventories keep Tab and the arrows from the keyboard focus, as a text
 # field does (the game's own `key_focus_blocked`), so Tab doesn't select the recipe book.
 [[native.mixin]]

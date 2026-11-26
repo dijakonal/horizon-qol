@@ -435,6 +435,7 @@ pub fn content(m: &Module, data: &HudData) -> Option<Content> {
         Id::Scoreboard
         | Id::TabFix
         | Id::KeyRemap
+        | Id::Cosmetics
         | Id::Fullbright
         | Id::Wardrobe
         | Id::Replay
@@ -1380,10 +1381,19 @@ mod tests {
 
     #[test]
     fn armor_materials_read_from_ids() {
-        assert_eq!(material("minecraft:diamond_chestplate"), Some(("Diamond", "Dia")));
+        assert_eq!(
+            material("minecraft:diamond_chestplate"),
+            Some(("Diamond", "Dia"))
+        );
         assert_eq!(material("minecraft:golden_boots"), Some(("Gold", "Gold")));
-        assert_eq!(material("minecraft:turtle_helmet"), Some(("Turtle", "Turt")));
-        assert_eq!(material("minecraft:netherite_sword"), Some(("Netherite", "Neth")));
+        assert_eq!(
+            material("minecraft:turtle_helmet"),
+            Some(("Turtle", "Turt"))
+        );
+        assert_eq!(
+            material("minecraft:netherite_sword"),
+            Some(("Netherite", "Neth"))
+        );
         assert_eq!(material("minecraft:elytra"), None);
         assert_eq!(material("minecraft:iron_block"), None);
     }

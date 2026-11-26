@@ -141,6 +141,12 @@ enum Target {
     ProfileDelete(usize),
     /// The sidebar's Skins & Capes button.
     Wardrobe,
+    /// The sidebar's Cosmetics button.
+    CosmeticsPage,
+    /// The cosmetics page's category tab.
+    CosmeticTab(crate::cosmetics::Category),
+    /// The cosmetics page's tile: the catalog item to wear, or None for the slot's nothing.
+    Cosmetic(Option<usize>),
     /// Skin tile `i` (0 is the account's), cape tile `i` (0 is none, then the account's, then
     /// imported ones).
     WardrobeSkin(usize),
@@ -165,6 +171,7 @@ enum Page {
     Options(usize),
     Profiles,
     Wardrobe,
+    Cosmetics,
 }
 
 /// Something to do with the profiles, for the mod to do (it has the files and the clipboard).
@@ -266,6 +273,13 @@ pub struct Gui {
     pub wardrobe_cape_zone: bool,
     /// The imported skin or cape whose delete waits for a second right-click.
     wardrobe_confirm: Option<(bool, usize)>,
+    /// The cosmetics page's category tab.
+    cosmetics_tab: crate::cosmetics::Category,
+    /// What the page asked to wear: the slot and the catalog item, or None to take the
+    /// slot's off.
+    pub cosmetics_action: Option<(&'static str, Option<&'static str>)>,
+    /// Whether the Cosmetics module is on, filled in by the mod each frame.
+    pub cosmetics_on: bool,
 }
 
 impl Gui {
@@ -306,6 +320,9 @@ impl Gui {
             wardrobe_wanted: false,
             wardrobe_cape_zone: false,
             wardrobe_confirm: None,
+            cosmetics_tab: crate::cosmetics::Category::Hats,
+            cosmetics_action: None,
+            cosmetics_on: true,
         }
     }
 
@@ -316,6 +333,15 @@ impl Gui {
         self.scroll = 0.0;
         self.opened = Instant::now();
         self.wardrobe_wanted = true;
+        self.note = None;
+    }
+
+    /// Opens the menu on the cosmetics page.
+    pub fn open_cosmetics(&mut self) {
+        self.view = View::Menu;
+        self.page = Page::Cosmetics;
+        self.scroll = 0.0;
+        self.opened = Instant::now();
         self.note = None;
     }
 
@@ -866,7 +892,7 @@ impl Gui {
             p.text(&count, [r[0] + r[2] - cw - 8.0, ty], theme::TEXT_FAINT);
             self.hit(r, Target::Tab(tab));
         }
-        let wardrobe = [px + 6.0, body_y + body_h - 74.0, SIDEBAR_W - 12.0, 20.0];
+        let wardrobe = [px + 6.0, body_y + body_h - 98.0, SIDEBAR_W - 12.0, 20.0];
         p.button(
             wardrobe,
             "Skins",
@@ -874,6 +900,14 @@ impl Gui {
             false,
         );
         self.hit(wardrobe, Target::Wardrobe);
+        let cosmetics = [px + 6.0, body_y + body_h - 74.0, SIDEBAR_W - 12.0, 20.0];
+        p.button(
+            cosmetics,
+            "Cosmetics",
+            hover(Target::CosmeticsPage) || self.page == Page::Cosmetics,
+            false,
+        );
+        self.hit(cosmetics, Target::CosmeticsPage);
         let profiles = [px + 6.0, body_y + body_h - 50.0, SIDEBAR_W - 12.0, 20.0];
         p.button(
             profiles,
@@ -901,6 +935,7 @@ impl Gui {
             Page::Options(i) => self.draw_options(p, content, modules, i, hover),
             Page::Profiles => self.draw_profiles(p, content, hover),
             Page::Wardrobe => self.draw_wardrobe(p, content, mouse, hover),
+            Page::Cosmetics => self.draw_cosmetics(p, content, hover),
         }
         self.clip = None;
         if clipped {
@@ -1720,6 +1755,23 @@ impl Gui {
                 }
             }
             Target::Wardrobe => self.open_wardrobe(),
+            Target::CosmeticsPage => self.open_cosmetics(),
+            Target::CosmeticTab(category) => self.cosmetics_tab = category,
+            Target::Cosmetic(which) => {
+                // One item per slot: wearing one takes the slot's other off, and clicking
+                // what is worn takes it off. The tab's nothing tile empties the slot.
+                let slot = match which {
+                    Some(index) => crate::cosmetics::CATALOG[index].category.slot(),
+                    None => self.cosmetics_tab.slot(),
+                };
+                let id = which.map(|index| crate::cosmetics::CATALOG[index].id);
+                let worn_now = crate::cosmetics::worn()
+                    .into_iter()
+                    .find(|(s, _)| *s == slot)
+                    .map(|(_, c)| c.id);
+                let id = if id == worn_now { None } else { id };
+                self.cosmetics_action = Some((slot, id));
+            }
             Target::WardrobeSkin(_)
             | Target::WardrobeCape(_)
             | Target::WardrobeSlim(_)
@@ -2040,6 +2092,7 @@ pub fn key_label(key: &str) -> String {
     }
 }
 
+mod cosmetics;
 mod wardrobe;
 pub use wardrobe::{WardrobeAction, WardrobeView};
 

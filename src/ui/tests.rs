@@ -766,6 +766,52 @@ fn remap_rows_take_a_key_and_reset_to_the_game_s_own() {
 }
 
 #[test]
+fn the_cosmetics_page_wears_and_takes_off() {
+    let mut mods = all_on();
+    let mut g = gui(View::Menu);
+    frame(&mut g, SIZE, [0.0, 0.0], &mods, "menu");
+    // The sidebar's Cosmetics button opens the page.
+    assert!(g.mouse_pressed(centre_of(&g, Target::CosmeticsPage), 0, &mut mods));
+    g.opened = Instant::now() - Duration::from_secs(1);
+    let r = frame(&mut g, SIZE, [0.0, 0.0], &mods, "cosmetics");
+    assert!(r.texts.iter().any(|(t, _)| t == "Cosmetics"));
+    for tab in ["Hats", "Ears", "Wings", "Auras", "Pets"] {
+        assert!(r.texts.iter().any(|(t, _)| t == tab), "{tab}");
+    }
+
+    // Clicking a tile asks the mod to wear it; clicking it again takes it off.
+    let straw = crate::cosmetics::CATALOG
+        .iter()
+        .position(|c| c.id == "qol_straw_hat")
+        .unwrap();
+    let at = centre_of(&g, Target::Cosmetic(Some(straw)));
+    assert!(g.mouse_pressed(at, 0, &mut mods));
+    assert_eq!(g.cosmetics_action, Some(("head", Some("qol_straw_hat"))));
+    // The mod publishes what it applied (save_config does); clicking again takes it off.
+    crate::cosmetics::publish(true, &[("head", "qol_straw_hat")]);
+    g.mouse_pressed(at, 0, &mut mods);
+    assert_eq!(g.cosmetics_action, Some(("head", None)));
+
+    // Ears share the head's slot: the none tile empties it all the same.
+    let ears = crate::cosmetics::CATALOG
+        .iter()
+        .position(|c| c.id == "qol_cat_ears")
+        .unwrap();
+    let tab_at = centre_of(&g, Target::CosmeticTab(crate::cosmetics::Category::Ears));
+    assert!(g.mouse_pressed(tab_at, 0, &mut mods));
+    frame(&mut g, SIZE, [0.0, 0.0], &mods, "cosmetics-ears");
+    let ears_at = centre_of(&g, Target::Cosmetic(Some(ears)));
+    g.mouse_pressed(ears_at, 0, &mut mods);
+    assert_eq!(g.cosmetics_action, Some(("head", Some("qol_cat_ears"))));
+    crate::cosmetics::publish(true, &[("head", "qol_cat_ears")]);
+    let tab_at = centre_of(&g, Target::CosmeticTab(crate::cosmetics::Category::Hats));
+    assert!(g.mouse_pressed(tab_at, 0, &mut mods));
+    let none_at = centre_of(&g, Target::Cosmetic(None));
+    g.mouse_pressed(none_at, 0, &mut mods);
+    assert_eq!(g.cosmetics_action, Some(("head", None)));
+}
+
+#[test]
 fn keystrokes_previews_in_every_mode() {
     let mut mods = modules::defaults();
     let ks = mods.iter().position(|m| m.id == Id::Keystrokes).unwrap();

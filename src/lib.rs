@@ -13,6 +13,10 @@ mod key_remap;
 mod modules;
 mod previews;
 mod profiles;
+
+/// The Cosmetics module's catalog and shared state, public for its game-side code
+/// (`src/mixins/cosmetics_module.rs`).
+pub mod cosmetics;
 /// Recording for Replay Studio, public for its game-side code (`src/voice/mixins/tick.rs`).
 pub mod replay;
 /// The sidebar scoreboard's look, public for its game-side code (`src/mixins/scoreboard.rs`).
@@ -177,6 +181,8 @@ struct State {
     /// The Key Remaps module's switch as the game-side last saw it, so going over queues its
     /// remaps or the game's defaults.
     key_remaps_on: Option<bool>,
+    /// The cosmetics worn, by the game's slot: what the Cosmetics page set.
+    equipped: Vec<(&'static str, &'static str)>,
 }
 
 impl State {
@@ -219,6 +225,7 @@ impl HorizonQol {
             active_profile: None,
             profiles: Vec::new(),
             key_remaps_on: None,
+            equipped: Vec::new(),
             freecam: None,
             camera_before: None,
             replay_session: None,
@@ -317,6 +324,7 @@ fn load_config(host: &dyn ClientHost, state: &mut State) {
         modules::load(&mut state.modules, &text);
         let lines = settings::parse(&text);
         skin_manager::load(state, &lines);
+        state.equipped = cosmetics::load(&lines);
         state.sprint_toggled = state.module(Id::ToggleSprint).bool("remember")
             && lines.iter().any(|(k, v)| k == SPRINT_STATE && v == "true");
         if let Some(layout) = lines
@@ -351,11 +359,14 @@ const ACTIVE_PROFILE: &str = "profile.active";
 
 /// Saves the settings, and to the profile in use when there is one.
 fn save_config(host: &dyn ClientHost, state: &State) {
+    // What the player's cosmetics go by, kept with the settings that make them.
+    cosmetics::publish(state.on(Id::Cosmetics), &state.equipped);
     if let Ok(path) = ConfigPath::new(CONFIG) {
         let mut text = modules::save(&state.modules);
         text += &format!("{SPRINT_STATE}={}\n", state.sprint_toggled);
         text += &format!("{DETECTED_LAYOUT}={}\n", state.data.auto_layout.name());
         text += &skin_manager::save(state);
+        text += &cosmetics::save(&state.equipped);
         if let Some(name) = &state.active_profile {
             text += &format!("{ACTIVE_PROFILE}={name}\n");
         }
@@ -1410,6 +1421,12 @@ impl Hooks for HorizonQol {
                 }
                 None
             }
+            Some("cosmetics") => {
+                if let Some(gui) = self.state().as_mut().and_then(|s| s.gui.as_mut()) {
+                    gui.open_cosmetics();
+                }
+                None
+            }
             other => other,
         };
         if let Some(action) = action {
@@ -1465,8 +1482,9 @@ impl Hooks for HorizonQol {
             state.loaded = true;
             load_config(host, state);
             // The game keeps the remaps in its own options, so they are already bound; the
-            // module's switch only moves from here.
+            // module's switch only moves from here. The cosmetics are worn from the config.
             state.key_remaps_on = Some(state.on(Id::KeyRemap));
+            cosmetics::publish(state.on(Id::Cosmetics), &state.equipped);
         }
         // The Key Remaps module's switch going over: on, its remaps again; off, the game's
         // defaults back.
@@ -1992,6 +2010,22 @@ impl Hooks for HorizonQol {
                 }
             }
             save_config(host, state);
+        }
+        // The Cosmetics page: what it asked to wear, kept and published with the config.
+        if state
+            .gui
+            .as_ref()
+            .is_some_and(|g| g.cosmetics_action.is_some())
+        {
+            let asked = state.gui.as_mut().and_then(|g| g.cosmetics_action.take());
+            if let Some((slot, id)) = asked {
+                cosmetics::equip(&mut state.equipped, slot, id);
+                save_config(host, state);
+            }
+        }
+        let cosmetics_on = state.on(Id::Cosmetics);
+        if let Some(gui) = state.gui.as_mut() {
+            gui.cosmetics_on = cosmetics_on;
         }
         let gui = state.gui.get_or_insert_with(new_gui);
         gui.shift = shift(host);
